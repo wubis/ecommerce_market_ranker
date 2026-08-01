@@ -7,11 +7,11 @@
 | Authors | _TBD_ |
 | Last updated | _YYYY-MM-DD_ |
 | Repository | `ecommerce_market_ranker` |
-| System | MarketRank: Multi-Stage Marketplace Search and Ranking System |
+| System | MarketRank: Multi-Stage E-commerce Search and Ranking System |
 | Required reference hardware | Apple M3 Mac with 8 GB unified memory; CPU-first, no CUDA |
-| Decision authority | This document is the end-state technical blueprint. Approved Goldfish documents may clarify implementation details but must not silently redesign it. |
+| Decision authority | This document is the end-state blueprint. Approved Goldfish documents may clarify implementation details but must not silently redesign it. |
 
-> **Truth and provenance statement.** ESCI query, product, locale, and relevance fields are real dataset fields. Marketplace attributes and outcomes in this project are deterministic simulations for systems demonstration only. They are not Amazon seller, price, conversion, inventory, margin, shipping, or risk data and must never be described as such.
+> **Evidence boundary.** MarketRank uses official Amazon ESCI query, product, locale, and relevance fields plus deterministic features derived from those fields and from retrieval/model outputs. ESCI relevance judgments are the only supervised targets. The required system does not manufacture business or offer data.
 
 ## Table of Contents
 
@@ -24,7 +24,7 @@
 7. [Success Criteria](#7-success-criteria)
 8. [Data Sources](#8-data-sources)
 9. [Data Model](#9-data-model)
-10. [Synthetic Marketplace Metadata Design](#10-synthetic-marketplace-metadata-design)
+10. [Data Provenance and Derived Metadata](#10-data-provenance-and-derived-metadata)
 11. [Data Splitting Strategy](#11-data-splitting-strategy)
 12. [Data Processing Pipeline](#12-data-processing-pipeline)
 13. [Query Understanding](#13-query-understanding)
@@ -36,8 +36,8 @@
 19. [Learning-to-Rank Design](#19-learning-to-rank-design)
 20. [Training Strategy](#20-training-strategy)
 21. [Optional Neural Reranking](#21-optional-neural-reranking)
-22. [Marketplace Optimization](#22-marketplace-optimization)
-23. [Marketplace Constraints](#23-marketplace-constraints)
+22. [Catalog Diversity Reranking](#22-catalog-diversity-reranking)
+23. [Diversity Constraints and Relevance Guardrails](#23-diversity-constraints-and-relevance-guardrails)
 24. [Personalization](#24-personalization)
 25. [Offline Evaluation](#25-offline-evaluation)
 26. [Evaluation Methodology](#26-evaluation-methodology)
@@ -56,7 +56,7 @@
 39. [Observability](#39-observability)
 40. [Memory Management](#40-memory-management)
 41. [Latency Targets](#41-latency-targets)
-42. [macOS Compatibility](#42-macos-compatibility)
+42. [macOS and Optional Colab Compatibility](#42-macos-and-optional-colab-compatibility)
 43. [Failure Modes and Fallbacks](#43-failure-modes-and-fallbacks)
 44. [Security and Privacy](#44-security-and-privacy)
 45. [Production-Scale Evolution](#45-production-scale-evolution)
@@ -75,132 +75,122 @@
 
 ## 1. Executive Summary
 
-MarketRank is a local, production-shaped search system that accepts a shopping query such as “wireless gaming mouse under $80” and returns a ranked, explainable list of products. The user problem is intent satisfaction: words, constraints, brands, attributes, and acceptable substitutes must be interpreted together. The marketplace problem is that a pure relevance order can over-concentrate sellers, expose unavailable inventory, ignore fulfillment quality, and starve new products. The ML problem is to learn a ranking function from grouped relevance judgments while preventing leakage and preserving a measurable boundary between relevance quality and simulated business policy.
+MarketRank is a CPU-first, multi-stage e-commerce search and ranking system evaluated using real Amazon ESCI relevance judgments. It accepts a textual shopping query such as “wireless gaming mouse” or “red running shoes,” retrieves products from a fixed benchmark catalog, constructs explainable query-product features, and returns a ranked list. The core scientific story is lexical and semantic retrieval followed by learning-to-rank—not a notebook-only classifier and not an imitation of unavailable business systems.
 
-The proposed system uses the Amazon Shopping Queries ESCI dataset as the authoritative relevance source. A lightweight parser extracts structured query signals. BM25 and compact Sentence Transformer retrieval independently generate candidates; reciprocal rank fusion (RRF) merges them. A feature builder combines query, product, retrieval, interaction, and clearly marked synthetic marketplace fields. LightGBM LambdaMART produces the primary learned ranking. A compact cross-encoder may rerank only the top 10–30 results and is optional. Finally, a deterministic greedy policy removes ineligible products and trades a bounded amount of relevance for seller diversity, quality, inventory, and new-product exposure.
+The primary benchmark is the English (`us`) ESCI Task 1 reduced subset (`small_version == 1`). Official query-product lists provide all supervised rows. Label IDs are `I=0`, `C=1`, `S=2`, `E=3`; official Task 1 gains are `[0.0, 0.01, 0.1, 1.0]`. A lightweight parser extracts tokens, brands, colors, model identifiers, units, and compatibility terms. BM25 and `all-MiniLM-L6-v2`/FAISS retrieve candidates independently; reciprocal rank fusion (RRF) forms a hybrid union. LightGBM LambdaMART ranks candidates using only source and derived signals. A compact cross-encoder may rerank the head and is optional.
 
-The local implementation is deliberately scaled to an Apple M3 Mac with 8 GB unified memory: English-only query-group samples, Parquet and DuckDB, a persisted sparse index, `all-MiniLM-L6-v2`, FAISS CPU, compact feature matrices, bounded candidate pools, local MLflow files, FastAPI, and Streamlit. Offline stages run sequentially, use memory mapping and conservative batches, and do not assume that training and serving artifacts can coexist in memory. The architecture preserves production concepts—offline/online separation, versioned artifacts, stage contracts, fallbacks, observability, evaluation gates—without paid services, CUDA, or transformer fine-tuning.
+An additional optional catalog-diversity stage can reduce brand repetition and semantic redundancy using real ESCI brand/color/text fields and normalized product embeddings. It begins from the promoted relevance order, is deterministic, records every rank change, and is accepted only when validation-selected relevance guardrails pass. Pure LambdaMART—or LambdaMART plus the optional neural stage—remains a complete system when diversity is disabled.
 
-This is valuable as a portfolio system because it demonstrates more than model fitting. It joins information retrieval, learning-to-rank, deterministic data engineering, multi-objective policy simulation, API serving, UI comparison, experiment design, and honest limitations. The intended final deliverable is a reproducible repository that builds persisted artifacts, runs fixed offline evaluations and ablations, starts a local API without recomputation, and presents results interactively. This document defines that end state; it does not implement it.
+The required reference machine is an Apple M3 Mac with 8 GB unified memory. The design uses sequential offline stages, lazy Polars/DuckDB processing, Parquet, memory-mapped arrays, conservative embedding batches, bounded candidate sets, and a 5.5 GB process-RSS target. Local execution is authoritative. Free Colab may optionally accelerate isolated batch jobs, but it is neither required nor trusted as the serving or final benchmarking environment.
+
+The final deliverable is a reproducible repository with versioned artifacts, fair retrieval and ranking evaluations, query-level confidence intervals, ablations, a FastAPI service, a Streamlit comparison demo, automated tests, and honest limitations. This Elephant specifies that end state; it does not implement it.
 
 ### 1.1 End-to-end architecture
 
 ```text
                                     OFFLINE PLANE
-  ESCI Parquet/CSV ──> Validate ──> Locale + group sampling ──> Normalized tables
-          │                                    │                       │
-          │                                    ├──> synthetic metadata │
-          │                                    │    (seeded, separate) │
-          │                                    v                       v
-          │                              Product documents ──> BM25 index
-          │                                    │             + FAISS index
-          │                                    v
-          └────────────────────────────> Candidate generation
-                                               │
-                                               v
-                                     Feature Parquet / matrices
-                                               │
-                                               v
-                                   LambdaMART train + evaluation
-                                               │
-                          experiment logs <────┴────> model/artifact registry
+  ESCI Parquet/CSV -> Validate -> Task-1 US filter -> group splits/profiles
+          |                                         |
+          v                                         v
+  normalized queries/products/judgments     fixed catalog + judged pools
+          |                                         |
+          +--------> versioned product documents <--+
+                               |                |
+                         BM25 index       embeddings + FAISS
+                               \                /
+                                candidate generation
+                                         |
+                           pair rescoring + feature matrices
+                                         |
+                       pointwise baseline + LambdaMART training
+                                         |
+                       optional neural/diversity evaluation
+                                         |
+                    reports + experiment/artifact manifests
 
                                      ONLINE PLANE
-  User/Streamlit ──HTTP──> FastAPI ──> Query parser ──> BM25 + FAISS
-                               │                              │
-                               │                         RRF + dedupe
-                               │                              │
-                               │                     online feature build
-                               │                              │
-                               │                       LambdaMART score
-                               │                              │
-                               │                  [optional cross-encoder]
-                               │                              │
-                               │                   marketplace policy
-                               │                              │
-                               └──── JSON results <── explanations + metrics
-                                      │
-                                      └── structured local logs / caches
+  User/Streamlit -> FastAPI -> query parser -> BM25 || FAISS
+                           -> RRF + dedupe -> pair features
+                           -> LambdaMART
+                           -> [optional cross-encoder]
+                           -> promoted active-relevance contract
+                           -> [optional catalog-diversity reranking]
+                           -> explanations + ranked JSON response
 
-  Persisted boundary: processed data, indexes, embeddings, encoders, model,
-  policy configuration, manifests, reports. API startup loads; it never rebuilds.
+  Startup loads one immutable serving bundle. It never downloads models,
+  computes product embeddings, builds indexes, or trains a model.
 ```
 
 ### 1.2 Architectural principles
 
-1. **Relevance truth is never simulated.** ESCI labels remain the only relevance targets.
-2. **Provenance is a first-class field.** Source, derived, simulated, and predicted values have different namespaces and documentation.
-3. **Retrieve broadly, rank precisely, optimize transparently.**
-4. **Offline and online computations share feature definitions.**
-5. **Every optional stage has a deterministic fallback.**
-6. **Measured trade-offs replace business claims.**
-7. **Artifacts are immutable, content-addressed, and loadable.**
-8. **The required reference machine is an Apple M3 Mac with 8 GB unified memory; production scale is only an analogue.**
+1. **Relevance truth is never manufactured.** ESCI labels are the only supervised targets.
+2. **Candidate populations are explicit.** Closed-pool ranking and catalog retrieval answer different questions.
+3. **Unjudged is not irrelevant.** Retrieved products outside a query’s official list remain unjudged.
+4. **Source, derived, and predicted fields have explicit provenance.**
+5. **Retrieve broadly, rank precisely, diversify optionally.**
+6. **One promoted relevance contract feeds every optional downstream stage.**
+7. **Offline and online feature formulas are identical and parity-tested.**
+8. **Artifacts are immutable, content-addressed, and compatibility-checked.**
+9. **Local M3/8 GB execution is required; optional remote acceleration cannot hide local infeasibility.**
 
 ## 2. Background and Motivation
 
-Marketplace search is difficult because “relevance” is not one relation. Exact products satisfy the expressed need; substitutes satisfy most intent by a different item; complements may be useful but should usually not displace exact items; irrelevant items must be suppressed. Lexical matching catches model numbers and exact brands but misses paraphrases. Semantic matching connects concepts but can blur critical constraints such as “case for” versus “phone,” negation, size, compatibility, and price.
+Product search must reconcile several kinds of match. Exact items satisfy the expressed intent; substitutes satisfy most of it; complements may be useful without deserving the first position; irrelevant products should be suppressed. Lexical methods are strong on brands, rare tokens, and model numbers but miss paraphrases. Semantic methods connect related concepts but can blur critical distinctions such as “case for phone” versus “phone,” compatibility, sizes, and negation.
 
-Catalog text is noisy and uneven. Titles may be keyword-heavy, descriptions missing, colors inconsistent, and brands aliased. The same product can appear across query judgments. Queries are short, ambiguous, misspelled, and frequently contain latent category or attribute constraints. Retrieval must keep enough relevant products for downstream ranking, while ranking must compare products only within a query group.
+Catalog text is noisy. Titles may repeat keywords, descriptions may be missing, colors may be inconsistent, and brands may have aliases. Queries are short and ambiguous. The same product can be judged for multiple queries, so row-level splitting leaks ranking context. Downstream learning requires complete query groups and a clear rule for products that were retrieved but never judged for that query.
 
-Marketplace objectives introduce another layer. Popular products can dominate exposure, a single seller can occupy the page, cold-start items lack history, and a relevant product may be unavailable or high-risk. However, optimizing synthetic conversion or margin as though it were observed behavior would be misleading. MarketRank therefore treats marketplace reranking as a policy simulation whose effect on ESCI relevance is explicitly measured.
+BM25 alone cannot represent semantic equivalence. Cosine similarity alone can miss exact identifiers and offers no structured interaction model. Neither learns how title overlap, brand conflict, color match, model-number agreement, and retrieval evidence interact. A staged architecture permits broad candidate recall, learned ordering, optional fine text interaction, and stage-local diagnostics.
 
-Latency and resource budgets couple all decisions. A cross-encoder over the whole catalog is impossible locally; a compact cross-encoder over 20 finalists is feasible. Exact dense search over a portfolio-sized corpus may be simpler and more reproducible than approximate search. Persisted embeddings and indexes shift work offline.
-
-BM25 alone is insufficient because it cannot naturally represent semantic equivalence and may over-reward repeated terms. Cosine similarity alone is insufficient because it can miss rare exact identifiers, has no marketplace context, and produces a single opaque score. Neither alone learns how title overlap, brand match, dense similarity, price compatibility, and candidate provenance interact. A multi-stage architecture lets each method solve the problem it is suited to and exposes measurable stage-level failures.
+Result lists can also be repetitive. Several near-duplicate products or one brand may dominate the head even when comparably relevant alternatives exist. A narrowly scoped diversity stage can demonstrate relevance-versus-redundancy trade-offs using observed catalog text and embeddings. It does not make causal, business-value, or fairness claims.
 
 ## 3. Scope
 
 ### 3.1 Required
 
-- Official ESCI file ingestion, license/attribution, schema validation, and documented download instructions.
-- Query-group-preserving English (`us`) development and portfolio profiles.
-- Normalized query, product, and judgment tables plus denormalized training artifacts.
-- Deterministic, separately stored synthetic marketplace metadata.
-- Lightweight query normalization and attribute/constraint extraction without an LLM.
-- Persisted BM25-compatible sparse retrieval and FAISS CPU dense retrieval.
-- Hybrid candidate union, deduplication, RRF, filters, and retrieval evaluation.
-- Shared offline/online feature definitions.
-- Random, sparse, dense, hybrid, heuristic, pointwise, and LambdaMART baselines.
-- CPU-feasible LightGBM LambdaMART training and fixed offline evaluation.
-- Deterministic marketplace eligibility and constrained reranking.
-- Optional top-10–30 cross-encoder reranking with graceful fallback.
-- Query-level confidence intervals, slices, ablations, latency, and memory reports.
-- File-backed experiment tracking, optional local MLflow UI, and artifact manifests.
-- FastAPI inference and a Streamlit comparison demo.
-- Unit, integration, smoke, regression, data, determinism, and API tests.
-- macOS-first setup, locked dependencies, quality gates, and complete documentation.
+- Ingest and validate the three official ESCI files.
+- Freeze the primary benchmark to English (`us`) Task 1 rows with `small_version == 1`.
+- Preserve complete query groups and official train/test provenance.
+- Create deterministic nested development and portfolio profiles.
+- Normalize source tables and build versioned product documents.
+- Separate the closed judged ranking pool from the fixed retrieval catalog.
+- Parse real query text using deterministic rules and dictionaries.
+- Build, persist, reload, and evaluate BM25 and FAISS CPU indexes.
+- Fuse BM25 and dense candidates with RRF and deterministic deduplication.
+- Materialize real/derived features with offline/online parity.
+- Train pointwise and LightGBM LambdaMART models on authoritative judged pairs only.
+- Evaluate retrieval, fixed-candidate ranking, and end-to-end diagnostics under named protocols.
+- Track experiments and artifact lineage locally without a running server.
+- Serve persisted artifacts through FastAPI and compare modes through Streamlit.
+- Provide unit, integration, smoke, regression, data, API, determinism, latency, and memory tests.
+- Run the development and required portfolio workflows locally on the M3/8 GB machine.
 
 ### 3.2 Optional but designed
 
-- Neural reranking.
-- MPS acceleration when compatible.
-- Full benchmark profile.
-- Simulated position-bias/counterfactual notebook.
-- Cold-start product stress split.
-- Docker image for portability.
+- Compact top-10–30 cross-encoder reranking.
+- Relevance-preserving catalog-diversity reranking.
+- MPS acceleration after parity and memory validation.
+- Free Colab acceleration for isolated offline batches.
+- Full reduced-US benchmark run, all-US-products stress catalog, cold-start stress test, and counterfactual-learning study.
+- Docker for portability, not for required local benchmarking.
 
 ### 3.3 Implementation boundary
 
-Goldfish tasks may create the structure specified in Section 35, but this Elephant creates only the design document. No source files, configs, generated artifacts, dataset copies, model weights, or notebooks belong in this design task.
+Goldfish tasks may implement this design after approval. This Elephant task creates or modifies only this Markdown document. Notebooks may explore results later but cannot own core functionality.
 
 ## 4. Non-Goals
 
-The first complete version will not provide:
+The required project does not provide:
 
-- real-time distributed search or Amazon-scale indexing;
-- claims of representing Amazon’s live search system;
-- transformer, dual-encoder, or cross-encoder fine-tuning;
-- reinforcement learning, online learning, or learning from live users;
-- real A/B tests, revenue optimization, conversion prediction, or seller-fairness guarantees;
-- production cloud deployment, Kubernetes, Spark, distributed feature stores, or managed model registries;
-- LLM APIs, paid embeddings, hosted vector databases, or paid experiment tracking;
-- GPU-required training or inference;
-- personalization, because ESCI has no user histories;
-- image retrieval, sponsored-auction optimization, checkout logic, or seller payouts;
-- exhaustive hyperparameter search;
-- inference over products outside the selected local catalog;
-- a claim that unjudged catalog products are irrelevant.
+- real-time distributed search, full Amazon-scale indexing, or a representation of Amazon’s live system;
+- transformer fine-tuning, GPU-required training, distributed Spark, Kubernetes, or managed infrastructure;
+- paid LLM, embedding, vector-database, tracking, or hosted-model services;
+- user personalization, real online learning, reinforcement learning, or genuine A/B testing;
+- real behavioral, revenue, seller, inventory, price, shipping, fulfillment, margin, conversion, review, sponsorship, cancellation, or return-probability modeling;
+- synthetic marketplace metadata generation or interfaces retained for such generation;
+- a claim that brand diversity is seller diversity, marketplace fairness, customer welfare, or causal improvement;
+- a claim that unjudged retrieved products are irrelevant;
+- a canonical category taxonomy not present in ESCI;
+- exhaustive hyperparameter optimization or production cloud deployment.
 
 ## 5. Functional Requirements
 
@@ -208,1413 +198,1387 @@ The first complete version will not provide:
 
 | ID | Requirement | Acceptance evidence |
 |---|---|---|
-| FR-001 | Ingest the three official ESCI files and record checksums, source URL, dataset version, and license. | Validated raw manifest and row/schema report. |
-| FR-002 | Normalize queries, products, judgments, and sources without changing authoritative labels. | Key/row reconciliation report. |
-| FR-003 | Build seeded development, portfolio, and optional full profiles by complete query groups. | Same config produces identical query IDs and hash. |
-| FR-004 | Filter required profiles to `product_locale=us`; reject unsupported mixed-locale joins. | Locale invariant test. |
-| FR-005 | Create deterministic product documents with explicit handling of missing fields. | Golden document tests and versioned template. |
-| FR-006 | Generate synthetic marketplace metadata independently of ESCI labels. | Determinism and no-label-dependency tests. |
-| FR-007 | Parse normalized query text, numbers, price constraints, brand, color, and category hints. | Curated query fixture tests. |
-| FR-008 | Build, persist, load, and query a sparse index. | Reload parity and Recall@K report. |
-| FR-009 | Encode products offline and persist normalized embeddings plus a FAISS CPU index. | Manifest, dimension/checksum validation, reload test. |
-| FR-010 | Compute query embeddings online without re-encoding products. | Startup and request profiling. |
-| FR-011 | Retrieve BM25, dense, and hybrid top-K candidates with provenance. | Unique candidate keys and per-source ranks. |
-| FR-012 | Deduplicate by product, enforce catalog eligibility, and deterministically break ties. | Invariant and tie fixture tests. |
-| FR-013 | Compute versioned query, product, retrieval, interaction, and marketplace features offline and online. | Offline/online parity test. |
-| FR-014 | Train and serialize a pointwise baseline and LightGBM LambdaMART with query groups intact. | Model manifest, group validation, held-out metrics. |
-| FR-015 | Score candidates and preserve stage-by-stage scores and ranks. | Prediction schema and rank trace. |
-| FR-016 | Optionally cross-encode only the configured top 10–30 candidates. | Disabled-path and bounded-count tests. |
-| FR-017 | Apply hard eligibility constraints and deterministic marketplace policy reranking. | Constraint audit per query. |
-| FR-018 | Compute retrieval, ranking, marketplace, latency, memory, slice, and bootstrap outputs. | Machine-readable and Markdown reports. |
-| FR-019 | Track each experiment’s data, code, config, model, metrics, and artifact lineage locally. | Reconstructable run directory. |
-| FR-020 | Serve health, search, model, artifact, and debug endpoints from persisted artifacts. | API contract tests. |
-| FR-021 | Provide a Streamlit UI comparing ranking modes and clearly label synthetic data. | Demo smoke test and screenshots. |
-| FR-022 | Explain non-causally why a result scored/ranked as it did and show candidate provenance. | Explanation response fixtures. |
-| FR-023 | Degrade to the highest available relevance pipeline when optional artifacts fail. | Failure injection tests. |
-| FR-024 | Reject incompatible artifact bundles before accepting traffic. | Startup compatibility tests. |
-| FR-025 | Provide reproducible CLI entry points for each offline stage without notebooks being required. | End-to-end development-profile smoke run. |
+| FR-001 | Ingest official ESCI examples, products, and sources files with checksums, source, version, and license. | Raw manifest and validation report. |
+| FR-002 | Normalize queries, products, judgments, and sources without changing authoritative labels. | Key and row reconciliation report. |
+| FR-003 | Filter required rows to `us` and `small_version == 1`. | Dataset predicate manifest and invariant test. |
+| FR-004 | Split and sample complete normalized-query groups deterministically; development is nested within portfolio. | Repeated query-ID checksum parity and no-leakage report. |
+| FR-005 | Build the fixed Task-1 US retrieval catalog independently of query-profile size. | Catalog selection predicate, membership checksum, and count. |
+| FR-006 | Build exact closed judged pools for supervised fitting and primary ranking evaluation. | One complete pool per included query; no unjudged rows. |
+| FR-007 | Construct deterministic product documents with field markers and null handling. | Golden document tests and template version. |
+| FR-008 | Parse normalized text, tokens, numbers, model identifiers, units, brands, colors, and compatibility terms. | Curated query fixtures. |
+| FR-009 | Build, persist, load, and query a sparse index. | Reload parity, candidate invariants, and retrieval metrics. |
+| FR-010 | Encode products offline and persist normalized vectors plus a FAISS CPU index. | Dimension, normalization, checksum, and reload tests. |
+| FR-011 | Encode queries online without re-encoding the product catalog. | Startup and request profiling. |
+| FR-012 | Retrieve BM25, dense, and hybrid candidates with source scores, ranks, and provenance. | Candidate schema and fixed-catalog tests. |
+| FR-013 | Deduplicate products, validate catalog membership, truncate deterministically, and break ties by stable keys. | Toy fusion and duplicate tests. |
+| FR-014 | Directly rescore every candidate with shared sparse/dense pair scorers for model features. | Complete pair-score coverage and parity tests. |
+| FR-015 | Materialize a versioned, leakage-reviewed ranking matrix using only source and derived features. | Feature registry and offline/online parity report. |
+| FR-016 | Train and serialize a pointwise baseline and LambdaMART with valid contiguous query groups. | Population manifest, model manifest, and held-out metrics. |
+| FR-017 | Persist component predictions and exactly one active-relevance stage/rank/score-comparability contract. | Promotion and fallback tests. |
+| FR-018 | Optionally cross-encode only the configured top 10–30 candidates. | Bounded-count, cache, latency, and disabled-path tests. |
+| FR-019 | Optionally rerank a bounded candidate head for brand/semantic diversity while preserving relevance guardrails. | Deterministic output, rank audit, and validation Pareto report. |
+| FR-020 | Compute protocol-valid retrieval, ranking, diversity, latency, memory, slice, and bootstrap outputs. | Long-form metric records with protocol IDs. |
+| FR-021 | Track dataset, code, config, features, models, metrics, hardware, and artifacts locally. | Reconstructable run directory. |
+| FR-022 | Serve health, search, model, artifact, and bounded debug-explanation endpoints. | FastAPI contract tests. |
+| FR-023 | Provide a Streamlit client comparing ranking stages and diversity effects. | UI smoke test and screenshots. |
+| FR-024 | Degrade to the highest valid relevance stage when optional components fail. | Failure-injection tests. |
+| FR-025 | Reject incompatible bundles before readiness and never rebuild artifacts at startup. | Compatibility and startup-operation tests. |
 
 ## 6. Non-Functional Requirements
 
 | ID | Requirement | Target or verification |
 |---|---|---|
-| NFR-001 | Zero monetary cost | No credential or paid-service requirement. |
-| NFR-002 | CPU-first macOS support | Required workflow passes on the 8 GB Apple M3 reference machine and is documented for other Apple Silicon and Intel Macs. |
-| NFR-003 | 8 GB unified-memory envelope | Required development and lower-bound portfolio workflows target peak process RSS at or below 5.5 GB, leaving headroom for macOS; stages run sequentially and avoid unnecessary full joins/copies. Actual peak RSS is reported. |
-| NFR-004 | Reproducibility | Seeds, input checksums, config hash, dependency lock, and code revision are recorded. |
-| NFR-005 | Determinism | Repeated same-environment runs produce identical sampled IDs, synthetic data, candidates, and metrics within declared floating tolerance. |
-| NFR-006 | Modularity | Retrieval, features, ranker, neural stage, policy, and serving depend on typed contracts, not each other’s internals. |
-| NFR-007 | Testability | Core logic has toy fixtures; slow/model/download tests are marked separately. |
-| NFR-008 | Observability | Structured stage timing, counts, versions, cache status, and errors. |
-| NFR-009 | Fast startup | API loads validated artifacts; no download, training, embedding, or index build at startup. |
-| NFR-010 | Caching | Query parsing/embeddings and optional cross-encoder scores use bounded version-aware caches. |
-| NFR-011 | Persistence | Every expensive stage writes an atomic artifact and `_SUCCESS`/manifest marker. |
-| NFR-012 | Local latency | Meet Section 41 benchmark targets on the declared reference machine where feasible; report actuals. |
-| NFR-013 | Maintainability | `pyproject.toml`, Ruff, pytest, type checks on public boundaries, pre-commit, and concise docs. |
-| NFR-014 | Graceful degradation | Optional component failures never force irrelevant or policy-only ordering. |
-| NFR-015 | Auditability | Each final result exposes source ranks, ranker score, policy actions, and provenance classes in debug mode. |
-| NFR-016 | Safe artifacts | Avoid arbitrary untrusted pickle loading; allowlist roots and verify manifests/checksums. |
-| NFR-017 | Offline operation | After initial dataset/model/dependency downloads, required search, evaluation, API, and demo work without internet. |
-| NFR-018 | Configuration discipline | No experiment-defining constant is embedded only in source code. |
+| NFR-001 | Zero monetary cost | No required credential or paid service. |
+| NFR-002 | CPU-first macOS support | Required workflow passes on the Apple M3/8 GB reference machine. |
+| NFR-003 | Memory envelope | Target process RSS ≤5.5 GB, leaving headroom for macOS; report actual peaks. |
+| NFR-004 | Reproducibility | Input checksums, seeds, resolved configs, lockfile, code revision, and artifact hashes. |
+| NFR-005 | Determinism | Same-environment sampling, fusion, rankings, and metrics match within declared floating tolerance. |
+| NFR-006 | Modularity | Retrieval, features, ranker, neural, diversity, evaluation, and serving depend on explicit contracts. |
+| NFR-007 | Testability | Pure toy fixtures cover formulas; slow/download tests are separately marked. |
+| NFR-008 | Observability | Structured stage timings, counts, versions, fallbacks, cache status, and errors. |
+| NFR-009 | Fast startup | Load a validated serving bundle; perform no expensive offline operation. |
+| NFR-010 | Caching | Bounded version-aware caches for query parses, embeddings, and optional cross scores. |
+| NFR-011 | Persistence | Atomic stage writes, manifests, and success markers. |
+| NFR-012 | Local latency | Compare measured p50/p95 with Section 41 targets on the reference machine. |
+| NFR-013 | Maintainability | `pyproject.toml`, Ruff, pytest, practical typing, pre-commit, and module ownership. |
+| NFR-014 | Graceful degradation | Optional-stage failure preserves the previous valid relevance order. |
+| NFR-015 | Auditability | Debug output traces source rank through final rank without causal claims. |
+| NFR-016 | Safe artifacts | Allowlisted roots, checksums, schema versions, and safer native serialization formats. |
+| NFR-017 | Offline core | After initial downloads, required training/evaluation/search/demo need no internet. |
+| NFR-018 | Configuration discipline | No experiment-defining value exists only as a source-code constant. |
 
 ## 7. Success Criteria
 
-Completion is comparative, not a promise of invented metric values. A benchmark report must include point estimates, query-level 95% bootstrap confidence intervals, and the exact profile/hardware/config.
+No absolute relevance result is guaranteed. The project succeeds through correct comparisons and reproducible evidence.
 
 | Dimension | Primary measure | Success gate |
 |---|---|---|
-| Candidate coverage | judged-relevant Recall@100 | Hybrid exceeds or statistically ties the better single retriever and strictly improves at least one primary relevance metric on validation or test. |
-| Early retrieval | MRR@10, NDCG@10 | Report BM25, dense, and hybrid under identical judged queries. |
-| Learned ranking | NDCG@10 and NDCG@20 | LambdaMART outperforms raw hybrid ordering on at least one primary held-out metric without a material unexplained regression on the other. |
-| Robustness | per-query/slice metrics | No result is presented only as a global average; include head/tail, label, and category-proxy slices. |
-| Policy diversity | unique sellers@10, HHI@10, max seller share | Policy improves at least one diversity measure on eligible test queries. |
-| New products | exposure@10 | Policy moves exposure toward the configured target on feasible queries. |
-| Relevance preservation | ΔNDCG@10 vs pre-policy | Mean and worst-slice loss stay within the configured validation-selected budget; exact-item preservation violations are zero unless infeasible and audited. |
-| Eligibility | stock and constraint violations | Zero out-of-stock results and zero seller-cap violations after policy, unless a documented feasibility fallback applies. |
-| Performance | per-stage and total latency | Actual p50/p95 compared with Section 41 targets; no hidden index rebuild. |
-| Memory | peak RSS by workflow | Development and the lower-bound portfolio profile complete within the 8 GB machine envelope, targeting ≤5.5 GB process RSS; larger portfolio variants are optional and must not replace the required result. |
-| Reproducibility | artifact/config/result hashes | Two clean same-environment development runs match deterministic artifacts and metric tolerances. |
-| Reliability | tests and reload | Required test suites pass; persisted indexes and models reload with prediction parity. |
+| Candidate coverage | judged-relevant Recall@100 | Validation selects hybrid; frozen test reports whether it exceeds or ties the better single retriever without retuning. |
+| Early retrieval | judged MRR@10, Exact Hit@10, known-judgment coverage@10 | BM25, dense, and RRF use the same catalog/query cohort. |
+| Learned ranking | official-gain NDCG@10 and NDCG@20 | LambdaMART improves at least one primary closed-pool metric over raw direct-score/RRF order without an unexplained material regression on the other. |
+| Objective comparison | paired pointwise-versus-LambdaMART delta | Same rows, features, groups, and evaluation protocol. |
+| Neural option | NDCG delta and added p95 latency | Reported before any diversity stage; adoption is evidence-driven. |
+| Brand diversity | unique brands@10, brand HHI/entropy@10 | Optional stage improves at least one measure on queries with sufficient known-brand alternatives. |
+| Semantic diversity | intra-list embedding distance@10 | Optional semantic penalty improves mean diversity on the validation-selected configuration. |
+| Relevance preservation | NDCG@10/@20 before versus after diversity | Mean loss stays within the configured validation-selected budget; Exact displacement and tail losses are reported. |
+| Integrity | duplicates and rank lineage | Zero duplicate products; every optional rank change is auditable. |
+| Performance | stage and total latency | Actual p50/p95 reported against targets; no hidden rebuild. |
+| Memory | peak RSS | Development and required portfolio workflows target ≤5.5 GB on the M3/8 GB machine. |
+| Reproducibility | hashes and metric parity | Two clean development runs match deterministic outputs/tolerances. |
+| Reliability | tests and artifact reload | Required test suites pass; indexes/models reload with parity. |
 
-The report must also disclose failures. If hybrid or LambdaMART does not win, the project is still complete when evaluation is correct, causes are analyzed, and no unsupported claim is made.
+If hybrid, LambdaMART, neural reranking, or diversity does not improve its target metric, the project can still be complete when the evaluation is sound, the result is disclosed, and the simpler stage remains champion.
 
 ## 8. Data Sources
 
-### 8.1 Authoritative source
+### 8.1 Authoritative source and benchmark
 
-Use the [Amazon Science ESCI repository](https://github.com/amazon-science/esci-data) and cite the [Shopping Queries Dataset paper](https://arxiv.org/abs/2206.06588). The official repository describes a multilingual dataset with English, Spanish, and Japanese queries, two sizes, up to roughly 40 judged products per query, and an Apache-2.0 license. Its documented files are:
+Use the [Amazon Science ESCI repository](https://github.com/amazon-science/esci-data) and cite the [Shopping Queries Dataset paper](https://arxiv.org/abs/2206.06588). Pin the release/retrieval date and SHA-256 checksums. Raw files remain immutable and Git-ignored.
 
-- `shopping_queries_dataset_examples.parquet`
-- `shopping_queries_dataset_products.parquet`
-- `shopping_queries_dataset_sources.csv`
+Required primary population:
 
-The project must pin a retrieval date/release identifier and record SHA-256 checksums. Raw files remain immutable and are excluded from Git.
+- `product_locale == "us"`;
+- `small_version == 1` (official reduced Task 1 subset);
+- official train rows for project train/validation construction;
+- official test rows for the frozen final test;
+- every row belonging to each selected query group.
 
-### 8.2 Official dataset schema
+The published reduced US subset contains 29,844 queries and 601,354 judgments before project collision quarantine/profile sampling. Release-level counts are checksum-versioned expectations, not constants silently accepted for a different release.
 
-| File | Field | Type after normalization | Meaning / handling |
+### 8.2 Dataset schema table
+
+| File | Field | Normalized type | Role |
 |---|---|---:|---|
-| examples | `example_id` | `int64` | Unique judgment-row identifier; retain for traceability. |
-| examples | `query` | `utf8` | Raw query text; canonical query table must verify consistency per `query_id`. |
+| examples | `example_id` | `int64` | Source-row traceability. |
+| examples | `query` | `utf8` | Raw query; consistency checked per `query_id`. |
 | examples | `query_id` | `int64` | Ranking group identifier. |
-| examples | `product_id` | `utf8` | Product identifier; joins with locale. |
-| examples | `product_locale` | categorical/`utf8` | `us`, `es`, or `jp`; required profiles use `us`. |
-| examples | `esci_label` | categorical | Authoritative `E`, `S`, `C`, or `I`; never overwritten. |
-| examples | `small_version` | integer/bool | Official subset membership indicator; preserve raw semantics. |
-| examples | `large_version` | integer/bool | Official larger-set membership indicator; preserve raw semantics. |
-| examples | `split` | categorical | Official train/test designation; test remains untouched by model selection. |
+| examples | `product_id` | `utf8` | Product key joined with locale. |
+| examples | `product_locale` | categorical | Required value `us`. |
+| examples | `esci_label` | categorical | Authoritative `E/S/C/I` target. |
+| examples | `small_version` | integer/bool | Required Task 1 membership flag. |
+| examples | `large_version` | integer/bool | Preserved source flag; not used to expand primary benchmark. |
+| examples | `split` | categorical | Official train/test provenance. |
 | products | `product_id` | `utf8` | Product key component. |
-| products | `product_locale` | categorical/`utf8` | Product key component; prevents cross-locale collisions. |
-| products | `product_title` | `utf8?` | Source title; missing becomes empty only in derived document. |
-| products | `product_description` | `utf8?` | Source description; preserve source null flag. |
-| products | `product_bullet_point` | `utf8?` | Source attributes/bullets; preserve source null flag. |
-| products | `product_brand` | `utf8?` | Source brand text; normalize only into a derived field. |
-| products | `product_color` | `utf8?` | Source color text; normalize only into a derived field. |
+| products | `product_locale` | categorical | Product key component. |
+| products | `product_title` | nullable `utf8` | Source title. |
+| products | `product_description` | nullable `utf8` | Source description. |
+| products | `product_bullet_point` | nullable `utf8` | Source bullets/attributes. |
+| products | `product_brand` | nullable `utf8` | Source brand; normalized copy is derived. |
+| products | `product_color` | nullable `utf8` | Source color; normalized copy is derived. |
 | sources | `query_id` | `int64` | Query key. |
-| sources | `source` | categorical/`utf8` | Dataset source partition; retain for analysis, never use as a target shortcut without review. |
+| sources | `source` | categorical | Retained for analysis; prohibited as an unreviewed shortcut. |
 
-The official files do **not** supply canonical category, seller, price, inventory, shipping, margin, conversion, return, cancellation, sponsorship, review, or popularity fields. Any such field is derived or simulated and must use the prefixes/conventions in Section 9.
+### 8.3 Labels and gains
 
-### 8.3 Label semantics and use
+| ESCI label | Label ID | Official Task 1 gain |
+|---|---:|---:|
+| Exact (`E`) | 3 | 1.0 |
+| Substitute (`S`) | 2 | 0.1 |
+| Complement (`C`) | 1 | 0.01 |
+| Irrelevant (`I`) | 0 | 0.0 |
 
-Canonical graded mapping is `E=3`, `S=2`, `C=1`, `I=0`. It is config-versioned, used for LambdaMART and graded NDCG, and never described as universal business truth. Retrieval Recall@K defaults to `E` and `S` as relevant; alternate `E`-only and `E/S/C` views are reported because complements behave differently by intent. MRR’s relevant threshold must be named in the metric output.
+LightGBM receives integer label IDs and the explicit `label_gain=[0.0,0.01,0.1,1.0]`. Primary DCG uses the published gains directly: `gain/log2(rank+1)`. It must not apply another exponential transform. Metric records include `label_mapping_id` and `gain_mapping_id`. Retrieval Recall defaults to `E+S`, with `E`-only and optional `E+S+C` views named explicitly.
 
-### 8.4 Deduplication and missing values
+### 8.4 Missing values and deduplication
 
-- Product uniqueness key is `(product_locale, product_id)`.
-- If duplicate product rows are identical after canonical null normalization, collapse and count them. Conflicts quarantine the product and fail strict builds.
-- Judgment uniqueness key is `(query_id, product_locale, product_id)`. Conflicting labels are a hard validation failure; exact duplicates collapse only with an audit.
-- Missing text fields remain null in normalized source tables. Derived document construction uses empty segments and missingness indicators.
-- A product with no usable title, description, bullets, brand, or color is invalid for retrieval and reported.
-- Query whitespace may be normalized in derived text, but raw text remains preserved.
+- Product PK: `(product_locale, product_id)`.
+- Judgment PK: `(query_id, product_locale, product_id)`.
+- Identical duplicates collapse with counts; conflicting products or labels fail strict validation.
+- Source nulls remain null in normalized tables. Derived documents use empty segments plus missingness flags.
+- Products with no usable source text are excluded from the retrieval catalog with an audit.
+- Raw display text remains separate from normalized retrieval text.
 
 ### 8.5 Product document
-
-The default versioned template is conceptually:
 
 ```text
 [TITLE] title [BRAND] brand [COLOR] color [BULLETS] bullet text
 [DESCRIPTION] truncated description
 ```
 
-Field markers prevent accidental concatenation ambiguity. HTML is stripped, Unicode normalized with NFKC, whitespace collapsed, and control characters removed. Case is preserved in stored display text; retriever-specific tokenization may lowercase. Descriptions and bullets have configurable character/token caps to bound index size. No stemming or stopword policy changes the authoritative source fields.
+The versioned builder strips HTML, applies Unicode NFKC, removes control characters, collapses whitespace, and caps long fields. Retriever tokenization may lowercase; stored display text does not.
 
-### 8.6 Legal, attribution, and limitations
+### 8.6 Dataset limitations
 
-Retain `LICENSE`/`NOTICE` obligations in the eventual repository and cite Reddy et al. Raw data and pretrained weights are not committed unless their licenses explicitly permit it; provide download instructions. Product text can contain brands and catalog content and should be treated as research data, not republished as a new commercial dataset.
+ESCI supplies bounded judged lists, not exhaustive judgments over a live catalog. An absent judgment means unknown, not irrelevant. ESCI also lacks authoritative seller, inventory, price, shipping, fulfillment, margin, conversion, review, product-age, sponsorship, cancellation, return-probability, and canonical-category fields. Those limitations constrain claims and prevent business-rule evaluation in the required system.
 
-ESCI is a bounded judged-result dataset, not a complete live catalog with exhaustive judgments. Products absent from a query’s judged pool are **unjudged**, not known irrelevant. Open-catalog retrieval Recall@K is therefore computed against known judged relevant products and labeled “judged recall”; precision-like metrics over newly retrieved unjudged items are biased. Ranking comparisons should additionally use a fixed candidate pool drawn from the ESCI judgments to isolate ranker quality.
+### 8.7 Candidate and evaluation populations
+
+1. **`esci_task1_us_judged_pool_v1`:** the complete official judged list for each included query. This is the only required population for supervised fitting, early stopping, pointwise/LambdaMART comparison, and official-gain NDCG.
+2. **`esci_task1_us_catalog_v1`:** distinct products referenced by any `us`, `small_version == 1` example across both official splits, joined to official products. Membership reads participation fields but not label values. It is fixed across query profiles.
+3. **`end_to_end_diagnostic_v1`:** hybrid retrieval from the fixed catalog followed by ranker inference. Products outside the query’s judged pool remain unjudged; only qrels-aware retrieval metrics and explicitly conditional ordering diagnostics are valid.
+
+An optional all-US-products catalog is a separately named stress test. Catalog manifests record predicate, checksums, membership count/hash, missing documents, text template, and estimated/resident index sizes. Query-profile sampling never changes required catalog membership.
 
 ## 9. Data Model
 
 ### 9.1 Provenance classes
 
-| Class | Namespace / metadata | Examples | May train relevance model? |
-|---|---|---|---|
-| Source | `src_*` or `provenance=esci` | query, title, brand, ESCI label | Yes, except label is target only. |
-| Derived | `drv_*` or `provenance=derived` | normalized brand, token overlap, BM25 score | Yes if available online and leakage-reviewed. |
-| Simulated | `sim_*` or `provenance=synthetic_vN` | price, seller rating, inventory | Only in named ablations; never called observed. |
-| Prediction | `pred_*` or `provenance=model:<id>` | LambdaMART score, cross-encoder score | Downstream stages only; no same-fold target leakage. |
-| Policy output | `policy_*` | eligibility reason, diversity penalty | No; audit/final presentation. |
+| Class | Examples | Training rule |
+|---|---|---|
+| Source (`provenance=esci`) | query, title, description, bullets, brand, color | Source text/features allowed; label is target only. |
+| Derived (`provenance=derived:<version>`) | normalized brand, token overlap, BM25 score, embeddings | Allowed when available online and leakage-reviewed. |
+| Prediction (`provenance=model:<id>`) | LambdaMART/cross-encoder scores | Downstream use only; never feed a model its own same-fold prediction. |
+| Diversity output (`provenance=diversity:<id>`) | penalties, rank change, cap relaxation | Audit/presentation only; not a relevance target. |
 
-### 9.2 Logical schemas and artifacts
+### 9.2 Logical schemas
 
-| Entity / artifact | Purpose and key | Important fields and types | Relationships | Local storage / expected profile size | Production analogue |
-|---|---|---|---|---|---|
-| `queries` | One query; PK `query_id` | raw/normalized text `utf8`, locale `cat`, split `cat`, source `cat`, parser version | 1:N judgments/candidates | Parquet; 5k–50k required | Query/log warehouse |
-| `products` | Canonical product; PK `(locale, product_id)` | source text nullable strings, derived document, missing flags | 1:N judgments; 1:1 synthetic metadata | Parquet; tens to hundreds of thousands | Catalog service/table |
-| `judgments` | Ground truth; PK `(query_id, locale, product_id)` | `example_id int64`, `esci_label cat`, `grade int8`, official split | N:1 queries/products | Parquet; 50k–500k required | Label store |
-| `marketplace_metadata` | Simulated product/seller state; PK product key | seller ID, price, risks, stock, margin, flags; provenance/version | N:1 seller; 1:1 product | Separate Parquet; one row/product | Offer/inventory services |
-| `sellers` | Shared latent simulated seller state; PK `seller_id` | quality latent, rating, review count, fulfillment, shipping | 1:N products | Synthetic Parquet; thousands | Seller profile service |
-| `query_parse` | Versioned parsed request; PK `(query_id/parser_version)` or request hash | tokens/list, price bounds, brand/color/category hints, confidence | 1:1 query/version | Parquet offline; LRU online | Query understanding service |
-| `retrieval_candidates` | Candidate provenance; PK `(run_id, query_id, product_id)` | sparse/dense ranks/scores nullable, RRF, source bitset, union rank | N:1 query/product | Partitioned Parquet; roughly queries × 100–300 | Candidate service logs |
-| `ranking_features` | Denormalized model matrix; same candidate key + feature set | compact numeric/categorical feature columns, label only in training artifact | Joins all prior entities | Parquet + NumPy/LightGBM matrix; potentially millions of rows | Offline/online feature store |
-| `model_predictions` | Per-stage predictions; PK `(model_id, query_id, product_id)` | score `float32`, rank `int32`, prediction timestamp/version | N:1 candidate/model | Partitioned Parquet | Prediction log |
-| `final_rankings` | User-facing order; PK `(request/run, query, final_rank)` | product, relevance rank, final score, policy actions, explanation IDs | Derived from predictions/policy | JSON online; Parquet evaluation | Search response/log |
-| `evaluation_outputs` | Metric facts; composite PK `(run, stage, slice, metric, cutoff)` | value, CI bounds, query count, threshold definition | N:1 experiment | Parquet + JSON + Markdown | Metrics warehouse |
-| `experiments` | Reproduction metadata; PK `run_id` | config/data/code hashes, seed, hardware, params, status, paths | Parent of run artifacts | JSON/YAML/MLflow file store | Experiment platform |
-| `artifact_manifest` | Bundle contract; PK `artifact_id` | type, version, hashes, schema, dependencies, created UTC, code revision | DAG across artifacts | JSON sidecar per artifact | Model/artifact registry |
-| `reranker_cache` | Optional score cache; PK `(model_hash, query_hash, product_id, text_hash)` | cross score, created UTC | Version-bound | SQLite | Distributed feature/cache store |
+| Entity/artifact | Purpose and primary key | Important fields | Format / expected size | Production analogue |
+|---|---|---|---|---|
+| `queries` | One query; `query_id` | raw/normalized text, locale, official/project split, source | Parquet; ~5k dev/~20k portfolio | Query warehouse |
+| `products` | Canonical item; `(locale, product_id)` | source text, normalized brand/color, document, missing flags | Parquet; fixed catalog scale | Catalog service |
+| `judgments` | Ground truth; `(query_id, locale, product_id)` | example ID, ESCI label, label ID, gain, official flags | Parquet; ~100k dev/~400k portfolio | Label store |
+| `catalog_membership` | Named catalog; `(catalog_id, locale, product_id)` | selection version and document availability | Parquet + manifest | Catalog snapshot registry |
+| `benchmark_candidate_pool` | Exact judged group; `(profile, split, query, product)` | label/gain and stable ordinal | Parquet | Curated evaluation set |
+| `query_parse` | Parsed request; `(query/parser version)` | tokens, numbers, model IDs, units, brand/color/compatibility entities | Parquet offline, LRU online | Query-understanding service |
+| `retrieval_candidates` | Source union; `(run, query, product)` | source scores/ranks, RRF, indicators, catalog ID | Partitioned Parquet | Candidate logs |
+| `ranking_features` | Denormalized matrix; same candidate key | compact features, feature-set ID, protocol; labels only in offline judged matrices | Parquet + training matrix | Feature platform |
+| `model_predictions` | Per-stage relevance; `(model, query, product)` | component score/rank, active stage, nullable active score, active rank, comparability | Parquet | Prediction log |
+| `promoted_relevance_rankings` | One downstream relevance order; `(run, query, rank)` | active stage, component lineage, tie rule, fallback | Parquet/JSON | Ranking service output |
+| `diversity_rankings` | Optional changed order; `(diversity run, query, product)` | input/output ranks, relevance score/rank, redundancy/brand penalties, constraint/relaxation actions, config ID, reason | Parquet/JSON | Diversification service log |
+| `evaluation_outputs` | Metric facts; `(run, protocol, stage, slice, metric, cutoff)` | value, CI, query/known/unjudged counts, mapping IDs | Parquet/JSON/Markdown | Metrics warehouse |
+| `experiments` | Reproduction lineage; `run_id` | config/data/code hashes, seeds, hardware, params, paths, status | JSON/Parquet + optional MLflow | Experiment platform |
+| `artifact_manifest` | Compatibility DAG; `artifact_id` | type/schema/version/hashes/dependencies/created UTC/code revision | JSON sidecar | Artifact registry |
+| `reranker_cache` | Optional cross-score cache; composite versioned key | score and created time | SQLite | Distributed cache |
 
-Normalized source tables preserve truth and minimize duplication. Candidate, feature, prediction, and final-ranking artifacts are intentionally denormalized for sequential scans, training, and reproducible evaluation. Labels must not be present in online feature payloads.
+Normalized source tables preserve truth; candidate, feature, prediction, and diversity artifacts are intentionally denormalized. Online feature payloads contain no labels.
 
-## 10. Synthetic Marketplace Metadata Design
+## 10. Data Provenance and Derived Metadata
 
-### 10.1 Goals and constraints
+Only deterministic transformations of official fields and model/index outputs are required. Each derived column records definition version, source columns/artifacts, fit population, dtype, missing rule, and online availability.
 
-The simulation exists to demonstrate joins, feature provenance, policy constraints, and multi-objective reporting—not to imitate confidential Amazon behavior. It must:
+Allowed product derivations include normalized brand/color strings, source-field lengths and missing flags, text completeness, versioned product documents, tokens, and normalized embeddings. Query derivations include normalized text, tokens, numbers, model identifiers, units, entity matches, and compatibility terms. Pair derivations include overlaps, conflicts, phrase matches, sparse/dense scores, and bounded ranks. Prediction and diversity values remain in separate downstream namespaces.
 
-- depend only on the configured root seed, stable identifiers, source/derived non-label product properties, and documented distribution parameters;
-- never read `esci_label`, grade, official split, retrieval score, or ranker output;
-- be invariant to input row order, parallelism, and incremental regeneration;
-- produce bounded, type-valid fields and a generation audit;
-- separate seller-level variables from product-level variables;
-- label every UI and report field as simulated.
+Rules:
 
-Use SHA-256-based stable sub-seeds, not Python’s randomized `hash()`. For example, the product stream derives from `SHA256(generator_version || root_seed || locale || product_id)`, while seller streams derive from seller ID. This makes regeneration order-independent.
-
-### 10.2 Generative graph
-
-```text
- stable product ID ──> seller assignment ──> seller latent quality
-       │                       │                    ├─ rating
-       │                       │                    ├─ review count
-       │                       │                    ├─ fulfillment
-       │                       │                    └─ shipping
-       ├─ category proxy ──> category priors ──> price / margin / return risk
-       ├─ age ──> new flag ──> reviews / popularity / exploration eligibility
-       └─ popularity latent ──> inventory / simulated conversion proxy
-
- quality + category + age + popularity ──> cancellation / return / inventory
-                                           (never ESCI label)
-```
-
-### 10.3 Generation rules
-
-| Field | Type / bounds | Proposed deterministic distribution and correlation | Caveat |
-|---|---|---|---|
-| `seller_id` | string | Stable hash bucket with a long-tail product-count allocation; seller table generated once. | Artificial identity. |
-| `sim_category` | category | Prefer a deterministic, versioned text taxonomy classifier; otherwise stable category-proxy assignment conditioned on title tokens. | Not an ESCI source category. |
-| `product_price` | float, `>0` | Category-conditioned log-normal, clipped to documented plausible bounds and rounded to cents. | Synthetic price. |
-| `seller_rating` | float `[1,5]` | Transform seller quality latent through a beta-like distribution concentrated above 3; round to 0.1. | Synthetic reputation. |
-| `seller_review_count` | int `>=0` | Zero-inflated log-normal/negative-binomial-like draw, scaled by seller age/quality. | Not observed reviews. |
-| `seller_fulfillment_rate` | float `[0,1]` | Logistic transform of seller quality plus seeded noise; positively correlated with rating. | Policy proxy. |
-| `expected_shipping_days` | int `[1,14]` | Ordered draw decreasing with fulfillment/quality and varying by category. | No geography. |
-| `return_probability` | float `[0,1]` | Logistic function of category prior, price z-score, and inverse quality plus noise; clip e.g. `[0.01,0.60]`. | Not a calibrated risk model. |
-| `cancellation_probability` | float `[0,1]` | Logistic function of inverse fulfillment, low inventory, and noise; clip. | Synthetic. |
-| `inventory_count` | int `>=0` | Zero-inflated log-normal/negative-binomial-like draw, increasing with popularity; explicit stockout mass. | Snapshot, not temporal truth. |
-| `profit_margin` | float `[0,1]` | Category beta prior with small seller/product noise; clip to policy range. | Not currency profit. |
-| `product_age_days` | int `>=0` | Mixture: recent-products component plus long-tail log-normal/exponential age. | Synthetic age. |
-| `is_new_product` | bool | `product_age_days <= configured_days` (default candidate: 90). | Definition is configurable. |
-| `is_sponsored` | bool | Low base-rate Bernoulli conditioned on seller/product attributes, but ignored by required relevance/policy scoring. | Demonstrative display only. |
-| `historical_popularity` | float `[0,1]` | Percentile of latent demand influenced by category and age; shrink young items toward prior. | Synthetic proxy. |
-| `estimated_conversion_rate` | float `[0,1]` | Logistic proxy of popularity, quality, shipping, return risk, and relative category price; no query or ESCI label. | Must be called simulated estimate. |
-
-Correlations must be tested by broad expected direction, not exact sample correlation. The generator writes parameters, package versions, seed, input product checksum, and summary plots. Adding a product must not change existing products’ values.
-
-### 10.4 Leakage controls
-
-- The generator interface does not accept judgments.
-- CI includes a source scan/test that prohibited columns are absent.
-- Marketplace values are generated before data splitting but from product identity/non-label text only.
-- If products overlap splits, the same simulated metadata is expected; it is an item property, not learned behavior.
-- Estimated conversion cannot use query text or relevance score.
-- Feature ablations report LambdaMART with and without simulated marketplace features. The preferred relevance model should default to real/derived relevance features; synthetic features are experimental.
-- Policy tuning uses validation only; test relevance labels cannot set weights or constraints.
+- Derived values never overwrite source columns.
+- Dictionaries/statistics are fitted on training or catalog text without test labels and persisted.
+- Product identity may key caches but is not a direct high-cardinality relevance feature.
+- No target-derived popularity or historical-relevance aggregate is required. Any future proposal needs out-of-fold computation and a leakage ADR.
+- Brand/color normalization retains raw values, a normalized value, and missing/unknown state.
+- Small hand-authored product fixtures are allowed for tests; they are not a production data generator.
 
 ## 11. Data Splitting Strategy
 
-Random row splitting is invalid because it fragments a query’s ranked list between train and evaluation, corrupts LightGBM group arrays, and allows nearly identical query context into both sides.
+Random row splitting is invalid because it fragments ranked lists, corrupts group arrays, and leaks query context.
 
-The default strategy:
+Default strategy:
 
-1. Preserve the official ESCI test query groups as the final test set.
-2. Within official training data, group by a leakage key consisting of locale plus normalized query text, not only `query_id`. Deterministically hash the group key and allocate approximately 85% to train and 15% to validation.
-3. Ensure each `query_id` occurs in exactly one split and every judgment for it follows.
-4. Sample profile query groups within each split using stable seeded hashing, preserving split proportions and useful label stratification at the group level.
-5. Freeze test until architecture and policy choices are selected.
+1. Filter to `us` and `small_version == 1`.
+2. Preserve official test groups for final evaluation. If the same normalized query text occurs in official train and test, keep test and quarantine the colliding train group from fitting.
+3. Group remaining official-train rows by `(locale, normalized_query_text)` and assign approximately 85%/15% to project train/validation using a stable label-blind hash.
+4. Move every row for a `query_id` together; assert split disjointness.
+5. Create nested development and portfolio group sets using the same stable hash; never sample rows or select test queries from label composition.
+6. Freeze test before feature/model/diversity selection.
 
-Products may overlap train/validation/test in the default split because the main task measures ranking generalization to unseen query groups over a shared catalog. Report product overlap. An optional cold-start stress test moves queries whose judged products meet a product-held-out rule, or masks product-history-like features; its smaller coverage and changed task must be labeled. A pseudo-temporal split is not valid without real timestamps; `product_age_days` is simulated and must not be used to claim temporal evaluation.
-
-Leakage checks include normalized query-text overlap, group disjointness, label distribution by split, product overlap, duplicate documents, feature timestamp/provenance, target-derived aggregate detection, and fit-on-train-only categorical/statistical encoders.
+Product overlap across query splits is permitted and reported because the default task tests new-query ranking over a shared catalog. An optional product-held-out stress test is separately named. There is no valid temporal claim because ESCI supplies no required time field.
 
 ## 12. Data Processing Pipeline
 
-### 12.1 Restartable offline training pipeline
+### 12.1 Restartable offline pipeline
 
 ```text
  [00 download + checksums]
-              |
- [01 raw schema validation] --failure--> quarantine/report
-              |
- [02 normalized queries/products/judgments/sources]
-              |
- [03 group split + deterministic profile sampling]
-              |
-      +-------+------------------+
-      |                          |
- [04 product documents]   [05 synthetic metadata]
-      |                          |
- [06 sparse index]        [metadata validation]
- [07 embeddings + FAISS]         |
-      +------------+-------------+
-                   |
- [08 train/val/test candidate generation + judged-pool candidates]
-                   |
- [09 feature materialization + offline/online parity fixtures]
-                   |
- [10 baseline + LambdaMART training / early stopping]
-                   |
- [11 optional reranker scoring]
-                   |
- [12 policy tuning on validation]
-                   |
- [13 frozen test evaluation, ablations, reports]
-                   |
- [14 serving bundle promotion]
+             |
+ [01 schema/data validation] -> failure report/quarantine
+             |
+ [02 normalized Task-1 US tables]
+             |
+ [03 grouped splits + nested profiles]
+             |
+ [04 fixed retrieval catalog + closed judged pools]
+             |
+ [05 product documents]
+        /                 \
+ [06 BM25 index]    [07 embeddings + FAISS]
+        \                 /
+ [08 retrieval candidates + closed-pool pair scores]
+             |
+ [09 query parsing + feature materialization/parity fixtures]
+             |
+ [10 pointwise + LambdaMART training]
+             |
+ [11 optional neural scoring + active-relevance promotion]
+             |
+ [12 optional diversity tuning/evaluation]
+             |
+ [13 frozen test reports + serving bundle promotion]
 
- Each numbered stage: config+dependency hash -> temp output -> validate ->
- atomic rename -> manifest + _SUCCESS. A matching successful stage is reused.
+ Every stage: resolved config/dependency hashes -> temporary output -> validate
+ -> atomic rename -> manifest + success marker. Matching outputs are reusable.
 ```
 
 ### 12.2 Stage rules
 
-- **Download:** manual script or instructions fetch only official files. Never silently redownload.
-- **Validate:** compare exact expected schema, label set, locale set, keys, nulls, and counts.
-- **Normalize:** project columns with Polars lazy scans; create canonical tables without destructive source cleaning.
-- **Split/sample:** select complete query groups using stable hashes. Profile manifests list IDs and counts.
-- **Text:** build a versioned retrieval document and normalization dictionary from training/catalog data.
-- **Categoricals:** fit encoders on training only, reserve unknown/missing values, and persist mappings.
-- **Labels:** map ESCI to `int8` grade in a separate target column with mapping metadata.
-- **Synthetic:** generate separate seller/product files using stable sub-seeds.
-- **Indexes:** build only from the declared catalog snapshot and document version.
-- **Features:** materialize candidate-aligned Parquet; do not compute all catalog cross-products.
-- **Versioning:** artifact ID includes stage name, semantic schema version, truncated config hash, and input dependency hashes. Creation time is metadata, not part of deterministic content identity.
-
-Interrupted stages leave only a temporary directory and cannot be loaded. A `--force` rebuild writes a new version; it does not mutate a promoted bundle.
+- Download is explicit and never occurs at API startup.
+- Validation checks exact schema, keys, labels, locale, flags, counts, and joins.
+- Polars lazy scans and DuckDB project only needed columns.
+- Split/profile selection uses complete groups and label-blind hashes.
+- Catalog membership is independent of query-profile sampling.
+- Label IDs and official gains are persisted as different columns/mapping IDs.
+- Indexes share one catalog and document version.
+- Feature computation is candidate-aligned, never query×catalog materialization.
+- Optional stages consume a persisted promoted relevance order.
+- Interrupted output cannot be loaded; rebuilds create a new immutable version.
 
 ## 13. Query Understanding
 
-The parser is deterministic, fast, and intentionally modest:
+The deterministic parser:
 
-1. Preserve raw input; enforce UTF-8, length, and control-character limits.
-2. NFKC-normalize, lowercase a retrieval view, collapse whitespace, and tokenize with a versioned regex.
-3. Extract currency/price patterns: “under/below/less than,” “over/above,” ranges (“$40–80”), and “around.” Conflicts yield low confidence and no hard filter.
-4. Match brands against an alias dictionary built from training/catalog brands using longest-boundary match.
-5. Match colors against a curated versioned lexicon with common aliases.
-6. Match category hints using a small versioned taxonomy/dictionary derived without test labels.
-7. Extract numbers, units, model identifiers, and simple attributes such as size/capacity.
-8. Apply a small spelling alias table only when unambiguous; retain original tokens.
-9. Produce stopword-preserving and stopword-reduced token views. Model numbers, negations, compatibility words, and unit tokens are never dropped.
+1. validates bounded UTF-8 input and preserves raw text;
+2. applies NFKC normalization, lowercase retrieval view, whitespace collapse, and versioned regex tokenization;
+3. extracts numbers, units, model identifiers, sizes/capacities, and compatibility phrases;
+4. matches longest-boundary brands against a dictionary derived from official catalog brands;
+5. matches colors against normalized official values plus a small versioned alias lexicon;
+6. applies conservative spelling aliases only when unambiguous;
+7. emits stopword-preserving and reduced token views while retaining negation, compatibility, unit, and model tokens.
 
-Output includes normalized text, token arrays, extracted bounds and entities, per-extraction confidence, parser version, warnings, and a deterministic hash. Low-confidence extraction contributes a feature but does not hard-filter. The parser must not require spaCy; a compact local tokenizer is optional. In production this boundary could become a learned query-understanding service.
+Output includes normalized text, tokens, extracted entities/confidences, parser version, warnings, and a deterministic hash. Low-confidence entities become features, not hard filters. No LLM or heavy NLP package is required.
 
 ## 14. Candidate Retrieval
 
-### 14.1 Retrieval contracts
+### 14.1 Contract
 
-Each retriever accepts parsed query text, `top_k`, locale/catalog version, and optional safe filters. It returns `(query/request_id, product_id, raw_score, rank, retriever_id, index_id, latency_ms)`. Ranks are one-based, scores are finite, product IDs belong to the active catalog, and ties resolve by product ID after score.
+Each retriever receives a parsed query, `top_k`, locale, and `catalog_id`, and returns keyed `(product_id, raw_score, one_based_rank, retriever_id, index_id, latency_ms)`. Scores are finite; products belong to the catalog; ties use product ID.
+
+Both retrievers also expose batch pair scoring over explicit product IDs. Closed-pool feature generation directly scores every judged pair even when it was absent from a top-K search result. Search and pair scoring use the same tokenization/document/model versions.
 
 ### 14.2 Sparse retrieval
 
-**Default local:** `bm25s` (or an equivalent audited SciPy sparse implementation) with persisted vocabulary, tokenization metadata, document map, and sparse score structures. It offers a lighter macOS path and better persistence/memory behavior than retaining `rank-bm25` Python token lists. `rank-bm25` is the smoke/reference implementation because it is simple and useful for parity tests. Pyserini is an optional benchmark when a JDK/Lucene installation is acceptable, not the required path.
+Default local implementation: `bm25s` or an audited equivalent persisted sparse representation. `rank-bm25` is the transparent smoke reference. Pyserini is an optional comparison, not a required JDK dependency. Persist vocabulary, tokenizer metadata, BM25 parameters, postings/statistics, document map, and catalog/document hashes. Candidate default is `K_sparse=150`, validation-configured.
 
-Input is the versioned product document; output is top `K_sparse` (default-config candidate 150, tuned on validation). BM25 parameters `k1` and `b` are config-driven. Index persistence is non-pickle where supported; manifest verification guards document order.
-
-Failure modes include long keyword-stuffed documents, misspellings, synonyms, memory growth, and poor semantic recall. Fielded weighting may be approximated by controlled title/brand repetition only as an explicit document-template version; learned interaction features handle fields later.
+Failure modes include verbosity bias, keyword repetition, misspellings, and synonym gaps. Field markers and downstream interaction features mitigate rather than conceal them.
 
 ### 14.3 Dense retrieval
 
-**Default local model:** `sentence-transformers/all-MiniLM-L6-v2`, a compact 384-dimensional model with strong ease-of-installation and CPU portfolio value. Products encode offline in batches; queries encode online. Vectors are L2-normalized, so FAISS inner product equals cosine similarity.
+Default model: pinned `sentence-transformers/all-MiniLM-L6-v2`, producing 384-dimensional vectors. Product vectors are L2-normalized offline; query vectors are normalized online. FAISS inner product therefore equals cosine similarity.
 
-**Default index:** `faiss.IndexFlatIP` for deterministic exact search at the required lower-bound portfolio size. It is simple, has no training stage, and yields a reliable reference. If measured portfolio latency exceeds the budget, `IndexHNSWFlat` is the pre-approved latency alternative, recognizing that it usually consumes more—not less—memory. If dense-index memory exceeds the 8 GB envelope, first reduce the catalog to the declared lower-bound portfolio profile; a compressed IVF/PQ experiment is allowed only after its recall against FlatIP is reported.
+Default index: CPU `IndexFlatIP` over the fixed catalog. It is exact, untrained, simple, and the quality reference. HNSW is a validated latency alternative but generally uses more memory. IVF/PQ is considered only for measured memory pressure and must report recall against FlatIP on identical catalog membership. Candidate default is `K_dense=150`.
 
-Output is top `K_dense` (default-config candidate 150). Failure modes include semantic overgeneralization, identifier mismatch, truncation, model download absence, query/product domain mismatch, and CPU latency.
+### 14.4 Candidate validity
 
-### 14.4 Filters
+Only locale/catalog membership, valid keys/documents, and duplicate removal can exclude candidates. Parsed brand/color/compatibility signals are ranking evidence, not hard filters. If one retriever fails, hybrid can use the other and records degraded provenance.
 
-Locale and `inventory_count > 0` are safe hard eligibility filters. Brand, color, category, and price parsing are fallible; default behavior uses them as ranking features, not hard filters. The API’s explicit structured price filter may hard-filter synthetic price because the user knowingly requested it and the field is labeled simulated.
+### 14.5 Retrieval technology comparison
 
-### 14.5 Cost comparison
-
-| Option | Strength | Local cost / persistence | Failure or caveat | Role |
+| Option | Strength | Local cost | Caveat | Role |
 |---|---|---|---|---|
-| `rank-bm25` | Minimal dependency, transparent | Python object/token memory; custom persistence needed | Slow/larger at portfolio scale | Smoke reference |
-| `bm25s`/equivalent | Sparse, fast CPU, persistable | Low-to-moderate RAM; NumPy/SciPy artifacts | Smaller ecosystem than Lucene | **Required local default** |
-| Pyserini/Lucene | Mature IR semantics | JDK, subprocess/JVM, larger setup | macOS friction | Optional comparison / production-shaped |
-| FAISS FlatIP CPU | Exact, deterministic dense search | `4 × N × 384` bytes plus IDs, ~146 MiB per 100k vectors | Linear scan | **Required dense default** |
-| FAISS HNSW | Faster ANN at scale | More index memory and tunable nondeterministic details | Approximation and build cost | Validated fallback |
-| OpenSearch | Fielded BM25, filters, operations | Service/JVM overhead | Unnecessary required infrastructure | Production analogue only |
+| `rank-bm25` | Simple and transparent | Python token memory | Weak persistence/scale | Smoke reference |
+| `bm25s`/equivalent | Fast sparse CPU and persistable | Moderate RAM | Smaller ecosystem | **Local default** |
+| Pyserini/Lucene | Mature IR behavior | JDK/JVM setup | macOS friction | Optional comparison |
+| FAISS FlatIP | Exact dense search | ~146 MiB/100k 384-D float32 vectors plus IDs | Linear scan | **Dense default** |
+| FAISS HNSW | Lower latency at scale | Additional memory | Approximate/tunable | Latency fallback |
+| OpenSearch | Fielded retrieval and operations | Service overhead | Unnecessary locally | Production analogue |
 
 ## 15. Hybrid Retrieval
 
-Candidate fusion options:
+Weighted normalized fusion is sensitive to incomparable query-specific score scales. RRF uses only ranks and is robust with little tuning:
 
-- **Weighted normalized scores:** can use min-max, z-score, or calibrated transforms but is sensitive to query-specific score distributions and missing sources.
-- **RRF:** sums `1/(c + rank)` across retrievers, ignores incompatible score scales, and is robust with little tuning.
-- **Other rank fusion:** Borda or learned fusion provides flexibility but adds choices/data needs.
-- **Union then learned ranker:** retains source scores/ranks as features and lets LambdaMART learn interactions.
+```text
+rrf(product) = Σ_source 1 / (rrf_constant + source_rank)
+```
 
-The default is **RRF for the pre-ranker order plus candidate union for LambdaMART**. `c` defaults to a config value such as 60 and is tuned only on validation. A product returned by one retriever receives only that contribution, plus explicit missing/source indicator features. Duplicate product IDs merge into one row retaining both scores/ranks. Non-finite scores fail validation. The union is deterministically sorted by RRF, best source rank, then product ID and truncated to `K_union` (default-config candidate 200).
+Default: union BM25 and dense results, merge duplicates, retain both scores/ranks and source indicators, sort by RRF then best source rank then product ID, and truncate to `K_union` (candidate default 200). A product returned by one source receives only that source’s RRF contribution.
 
-The judged-pool ranking track is separate: all judged products for a query form the candidate set to isolate ranking quality. The open-catalog retrieval track uses the real index and measures judged recall, acknowledging unjudged items.
+Evaluation populations remain distinct:
+
+- **Closed pool:** complete official judged products; direct pair scores determine BM25/dense/RRF baselines within that pool.
+- **Catalog retrieval:** source top-K and hybrid union from the fixed catalog; use qrels-aware retrieval metrics.
+- **End-to-end diagnostic:** LambdaMART scores the retrieved union; unjudged products never become training rows.
 
 ## 16. Embedding Pipeline
 
-Product embeddings are always offline:
+1. Resolve a pinned model revision from the local cache; initial download is explicit.
+2. Sort product IDs deterministically and stream product documents.
+3. Start batches at 16–32 on the M3/8 GB machine; increase only after RSS measurement.
+4. Encode `float32`, normalize, and validate dimensions, finite values, and norms.
+5. Write a temporary `.npy` memory map and aligned product-ID array.
+6. Checkpoint verified contiguous row ranges for restart.
+7. Build/persist FAISS, write manifest, and atomically promote.
 
-1. Resolve a locally cached, pinned model revision; initial network download is explicit.
-2. Read product IDs/documents in deterministic sorted order.
-3. Encode configurable batches conservatively (start at 16–32 on the 8 GB M3 and test up to 64 only after measuring peak memory), with fixed truncation/max sequence behavior.
-4. Convert to `float32`, L2-normalize, validate finite values and norm tolerance.
-5. Write to a temporary NumPy memory-map and a parallel product-ID array.
-6. Checkpoint completed contiguous row ranges so an interrupted run resumes only after verifying model/document hashes.
-7. Build and persist FAISS from the completed matrix.
-8. Write a manifest and atomically promote.
+Artifact identity includes catalog, document template, model slug/revision, dimension, dtype, normalization, and config hashes. API startup loads the cached query encoder and FAISS; candidate vector lookup uses FAISS reconstruction or bounded rows from a read-only memory map. Product embeddings are never recomputed at startup.
 
-Artifact names encode catalog profile, document-template version, model slug/revision, dimension, dtype, normalization, and config hash. Expected default dimension is 384, but consumers read it from the manifest and reject mismatches. The raw embedding matrix is retained because it supports index rebuilds and feature lookup without re-encoding.
-
-API startup loads the model from local cache, memory-maps product vectors if interaction similarity needs them, and reads the FAISS index. It never computes product embeddings. Query vectors are cached by `(model_hash, normalized_query)` in a bounded in-process LRU. If the model or index is unavailable, startup marks dense unavailable and hybrid falls back to BM25 if fallback mode is enabled; strict mode fails health/readiness.
+Optional Colab output is accepted only when it uses the same resolved config/model revision and returns platform-neutral vectors, ID map, checksums, and manifest. The FAISS reference index is rebuilt or parity-checked locally.
 
 ## 17. Feature Engineering
 
 ### 17.1 Feature policy
 
-Features must have one authoritative definition used by batch and serving adapters. Fit state (vocabularies, category encoders, normalizers) comes from training only. Every feature registry entry declares dtype, default/missing behavior, provenance, online availability, and leakage status. Numeric features use compact `float32`/small integers unless metric precision requires otherwise.
+One registry defines batch and serving formulas, dtypes, provenance, defaults, fit state, and missing behavior. Statistical/dictionary state is fitted without test labels and persisted. Compact `float32` and small integer types are preferred.
 
 ### 17.2 Feature catalog
 
-| Feature(s) | Class | Definition / computation | Rationale | Train + inference availability | Leakage risk / storage |
-|---|---|---|---|---|---|
-| query char/token count | Query, derived | Counts from parser views | Query specificity/complexity | Both | Low; computed online, optional offline cache |
-| query unique-token ratio | Query | unique tokens / tokens | Distinguishes repetition | Both | Low; computed |
-| query digit/model-token count | Query | Regex token classes | Exact identifiers favor lexical match | Both | Low; computed |
-| detected brand/color/category flags and confidence | Query | Parser entity outputs | Conditions interaction features | Both | Dictionary fitted/versioned without test labels; computed |
-| has price bound; lower/upper bound | Query | Parsed currency constraints | Supports compatibility | Both | Parser errors; computed |
-| locale | Query/source | Canonical locale categorical | Controls text/catalog behavior | Both | Low; payload |
-| title/description/bullet char and token counts | Product/derived | Counts before/after truncation | Completeness and verbosity | Both | Low; product feature Parquet/in-memory projection |
-| field missingness indicators | Product/derived | One flag per source text field | Missingness is informative and explicit | Both | Low; Parquet |
-| normalized brand/color/category proxy | Product source/derived | Source normalization; category is derived/simulated, never source | Matching and slices | Both | Taxonomy may drift; encoded mapping persisted |
-| product completeness | Product/derived | Weighted fraction of nonempty source fields | Catalog quality proxy | Both | Must not use labels; Parquet |
-| BM25 score/rank | Retrieval/predicted-stage | Raw sparse score; one-based rank, missing flag | Exact lexical evidence | Both after retrieval | Candidate-selection bias; candidate Parquet/request |
-| dense cosine/rank | Retrieval/predicted-stage | Inner product of normalized vectors; rank | Semantic evidence | Both after retrieval | Model-version coupling; candidate payload |
-| RRF score/rank | Retrieval/derived | Sum reciprocal ranks; deterministic order | Robust fusion prior | Both | Low; candidate payload |
-| source indicators | Retrieval | Sparse-only/dense-only/both bit flags | Missing source is informative | Both | Low; candidate payload |
-| title token Jaccard/coverage | Interaction | Query/title intersection over union and over query tokens | Direct title match | Both | Tokenizer-version risk; computed |
-| description/bullet token coverage | Interaction | Query-token coverage per field | Evidence beyond title | Both | Low; computed |
-| exact phrase in title/document | Interaction | Boundary-aware normalized substring | Strong precision signal | Both | Avoid empty query; computed |
-| brand/color match and conflict | Interaction | Parsed entity vs normalized product field | Constraint satisfaction | Both | Parser confidence needed; computed |
-| category hint match | Interaction | Query hint vs product category proxy | Intent fit | Both | Proxy is not ground truth; computed |
-| price compatibility/distance | Interaction + simulated | In bound flag and normalized distance to bound/center | Query constraint under simulation | Both | Synthetic price; must be tagged; computed |
-| semantic similarity | Interaction/retrieval | Dense score or direct normalized dot product | Semantic alignment | Both when dense available | Missing fallback; candidate payload |
-| query-title length ratio | Interaction | bounded log ratio | Penalizes mismatched granularity | Both | Low; computed |
-| seller rating/reviews/fulfillment/shipping | Marketplace/simulated | Joined product→seller values; log1p reviews | Policy quality proxies | Both when metadata loaded | Synthetic; separate Parquet/in-memory columns |
-| return/cancellation probability | Marketplace/simulated | Generated risk values | Risk-aware policy experiment | Both | Synthetic and not calibrated; separate |
-| inventory and in-stock | Marketplace/simulated | count and `count>0` | Eligibility and availability | Both | Synthetic snapshot; separate |
-| price and category-relative price z-score | Marketplace/simulated | log price; train/catalog category statistics | Affordability context | Both | Stats fit without labels; persisted state |
-| profit margin | Marketplace/simulated | Generated ratio | Policy trade-off demonstration | Both | Never call real profit; separate |
-| product age and new flag | Marketplace/simulated | log1p days; threshold flag | Exploration/cold start | Both | Synthetic; separate |
-| historical popularity | Marketplace/simulated | Generated `[0,1]` proxy | Popularity-bias ablation | Both | Avoid target encoding; separate |
-| estimated conversion rate | Marketplace/simulated/model-like | Generated deterministic proxy | Multi-objective demonstration | Both | Must not use query labels; not a real prediction |
-| LambdaMART score/rank | Prediction | Serialized ranker output | Input to later stages | Inference and evaluation only | Never feed into same model; prediction artifact |
-| cross-encoder score/rank | Prediction/optional | Batched pair score and normalized form | Fine semantic interaction | Only when enabled | Cache/model coupling; SQLite/request |
+| Feature | Class | Definition / rationale | Availability | Leakage/storage |
+|---|---|---|---|---|
+| Query char/token counts | Query | Text lengths indicate specificity | Train/online | Computed; low risk |
+| Unique-token ratio | Query | Unique tokens divided by token count | Both | Computed |
+| Digit/model-token count | Query | Regex token classes; helps exact identifiers | Both | Computed |
+| Brand/color detected + confidence | Query | Parser match against real catalog values | Both | Dictionary versioned |
+| Lexical specificity | Query | IDF summary over query tokens from catalog corpus | Both | Corpus/index versioned, no labels |
+| Locale | Query/source | Required locale categorical | Both | Source |
+| Title/description/bullet lengths | Product | Character/token counts by source field | Both | Product Parquet |
+| Source-field missing flags | Product | One flag per official field | Both | Product Parquet |
+| Normalized brand/color | Product | Versioned normalization of official strings | Both | Raw retained; unknown code |
+| Product-text completeness | Product | Fraction/weighted count of nonempty source text fields | Both | No labels |
+| Direct BM25 score | Retrieval-derived | Pair score for every candidate | Both | Index/version coupled |
+| BM25 bounded rank fraction | Retrieval-derived | `(rank-1)/max(n-1,1)` within current candidate set | Both | `[0,1]`; absolute rank diagnostic only |
+| Direct dense cosine | Retrieval-derived | Normalized query-product dot product | Both | Model/version coupled |
+| Dense bounded rank fraction | Retrieval-derived | Same bounded formula | Both | Candidate-population shift reported |
+| Closed-set RRF score/rank fraction | Retrieval-derived | RRF recomputed from direct pair-score ranks | Both | Candidate-set semantics versioned |
+| Source top-K scores/ranks/RRF | Retrieval provenance | Actual retrieval-generator outputs | End-to-end only | Stored for diagnostics; excluded from `ltr_core_v1` |
+| Sparse-only/dense-only/both indicators | Retrieval provenance | Which generators returned product | End-to-end only | Optional candidate-conditioned model only |
+| Title token Jaccard/coverage | Interaction | Intersection/union and query-token coverage | Both | Tokenizer versioned |
+| Description overlap | Interaction | Query coverage in description tokens | Both | Computed |
+| Bullet overlap | Interaction | Query coverage in bullet tokens | Both | Computed |
+| Exact phrase match | Interaction | Boundary-aware normalized substring | Both | Empty-query guarded |
+| Brand match/conflict | Interaction | Parsed brand vs normalized official brand | Both | Confidence and missing states |
+| Color match/conflict | Interaction | Parsed color vs normalized official color | Both | Confidence and missing states |
+| Model-number match/conflict | Interaction | Exact normalized identifier comparison | Both | Conservative parser |
+| Compatibility-term match | Interaction | Query compatibility token vs product text | Both | Rule versioned |
+| Semantic similarity | Interaction | Direct dense cosine | Both when dense available | Approved missing fallback |
+| Query-title length ratio | Interaction | Bounded log ratio | Both | Computed |
+| LambdaMART score/rank | Prediction | Base relevance output | Downstream only | Separate prediction artifact |
+| Cross score/rank | Prediction/optional | Bounded-head neural output | Optional | Model/cache coupled |
+| Active stage/score/rank/comparability | Prediction | Promoted relevance contract | Downstream only | Bundle semantics validated |
 
-No aggregate such as “historical relevance by product/query” is allowed by default because it can encode target labels and exploit product/query overlap. Any future aggregate requires out-of-fold computation and an explicit leakage review.
+### 17.3 Primary feature contract
+
+`ltr_core_v1` contains query/product/interaction features, direct BM25 and dense scores, bounded within-set rank fractions, and closed-set RRF derived from direct pair ranks. It excludes original top-K provenance indicators because all closed-pool products are directly rescored and source membership would be population-dependent. Those fields remain available to an explicitly named `ltr_candidate_conditioned_v1` ablation trained only under a separately approved labeling protocol.
+
+Absolute candidate rank/count, raw product ID, test-fitted encodings, labels/gains, and target-history aggregates are absent from the model matrix. Offline/online parity means identical formulas; distribution reports still compare the roughly 40-item closed pool with unions up to 200.
 
 ## 18. Baseline Ranking Methods
 
-| Model | Inputs | Purpose | Expected limitation |
-|---|---|---|---|
-| Seeded random | candidate IDs | Metric sanity floor and deterministic test | No relevance signal |
-| BM25 | sparse score/rank | Strong lexical baseline | Semantic gaps |
-| Dense | cosine/rank | Semantic baseline | Exact-token/constraint failures |
-| Hybrid RRF | source ranks | Fusion baseline | Fixed weights, no rich interactions |
-| Weighted heuristic | normalized retrieval + selected match features | Interpretable non-ML comparison and fallback | Manual tuning |
-| Pointwise LightGBM classifier/regressor | same leakage-safe feature set | Tests value of supervised features without ranking objective | Ignores within-query list structure |
-| LightGBM LambdaMART | grouped features and graded labels | Required primary ranker | Depends on candidate coverage and valid groups |
-| Optional cross-encoder fusion | top LambdaMART candidates | Tests local neural interaction value | CPU latency |
+### 18.1 Model comparison table
 
-All baselines use identical split definitions and, for ranking comparisons, identical candidate pools. Random ordering uses a stable `(run_seed, query_id, product_id)` key rather than process randomness.
+| Method | Inputs | Why included | Limitation |
+|---|---|---|---|
+| Seeded random | Stable candidate keys | Metric sanity floor | No relevance evidence |
+| BM25 | Direct sparse score | Lexical baseline | Semantic gaps |
+| Dense | Cosine score | Semantic baseline | Identifier/constraint errors |
+| RRF | Direct or retrieved ranks per protocol | Robust fusion baseline | Fixed rule |
+| Weighted heuristic | Normalized scores + selected matches | Interpretable supervised-free fallback | Manual weights |
+| Pointwise LightGBM | `ltr_core_v1` | Isolates benefit of supervision without rank objective | Ignores group ordering objective |
+| LambdaMART | `ltr_core_v1` + groups | Required primary ranker | Cannot recover missed candidates |
+| Cross-encoder fusion | Top LambdaMART candidates | Optional fine interaction | CPU latency |
+| Diversity reranker | Active relevance + brand/embedding signals | Optional redundancy trade-off | May reduce relevance |
+
+Primary ranking baselines use identical closed judged pools. Retrieval baselines use the fixed catalog. Random order is keyed by `(seed, query_id, product_id)`.
 
 ## 19. Learning-to-Rank Design
 
-Pointwise methods predict each row independently and do not directly optimize relative order. Pairwise methods learn preferred item pairs and align better with ranking but can overweight large groups. Listwise methods optimize list-level objectives; LambdaMART uses gradient-boosted trees with lambda gradients that approximate ranking-metric improvements.
+Pointwise models predict rows independently. Pairwise methods learn preferences but can overweight large groups. Listwise methods target ordered lists. LightGBM LambdaMART is primary because it is ranking-aware, CPU-efficient, strong on mixed tabular features, fast at inference, handles missing values, and supports importance/TreeSHAP.
 
-LightGBM `LGBMRanker` with `objective=lambdarank` is the primary model because it handles nonlinear mixed tabular features, missing values, CPU training, query groups, feature importance, and fast inference without GPU or fine-tuning. The grade mapping is config-versioned (`I=0,C=1,S=2,E=3`) with `label_gain` explicitly matching the chosen gains. Training rows are sorted by query group and stable candidate key; the group-size array must sum exactly to row count and align contiguously.
+Exact training construction:
 
-Categoricals use LightGBM native categorical columns when stable and low-cardinality; brand/product IDs are not naively one-hot encoded. Unknown and missing categories have explicit codes. Missing retriever values remain missing plus source indicators. Optional monotonic constraints may enforce sensible directions only for unambiguous simulated risk/quality features after an ablation; they are not default because relevance interactions can legitimately be non-monotone.
+1. Select official `us`, `small_version == 1`, train rows assigned to project train.
+2. Retain every judgment in each selected query group; never add an unjudged row.
+3. Join exactly one product; missing/conflicting joins fail rather than silently drop.
+4. Assign label ID separately from official gain.
+5. Build `ltr_core_v1`; directly score every judged pair with sparse/dense scorers.
+6. Recompute bounded ranks and closed-set RRF within the complete judged pool.
+7. Sort by stable query ordinal/product ID and construct contiguous group sizes.
+8. Exclude groups with fewer than two rows or one distinct label from fitting with audited counts; retain them for defined evaluation.
+9. Persist a training-population manifest with predicates, query IDs, exclusions, distributions, features, scorers, split hash, and checksums.
 
-Training uses early stopping on validation NDCG cutoffs, controlled thread count, shallow/moderate trees, feature subsampling, and seeded determinism settings. Limited search covers learning rate, leaves, minimum child samples, estimators, feature/bagging fractions, and regularization. Test data is evaluated once after selection.
+Use `objective=lambdarank` and `label_gain=[0.0,0.01,0.1,1.0]`. Fit categorical mappings on training only; reserve missing/unknown codes. Product IDs are not categorical features. No monotonic constraints are required. Early stopping uses validation NDCG. Test is evaluated only after selection.
 
-Model artifacts include LightGBM’s text model format, feature schema/order, categorical mappings, gains, training config, dependency versions, input hashes, validation history, and compatibility version. Inference validates feature names/types, predicts candidates as a batch, and sorts score descending with deterministic tie breaks.
+Model serialization uses LightGBM text plus a manifest containing feature names/order/types, gains, params, dependencies, data/config/code hashes, validation history, and fallback compatibility. Prediction sorts descending with product-ID tie breaks. Gain/split importance and bounded TreeSHAP samples support developer explanations without causal interpretation.
 
-Feature importance includes gain/split importance and optional TreeSHAP on a bounded stratified query sample. Explanations are associational, not causal. Compare with:
-
-- **XGBoost Ranker:** credible alternative, similar CPU tree ranking; keep as fallback benchmark, not duplicate required infrastructure.
-- **CatBoost ranking:** attractive categorical handling but another dependency and potentially different ranking workflow.
-- **Neural rankers:** better text interaction potential but higher CPU cost and less transparent feature/policy integration.
+XGBoost Ranker and CatBoost ranking are credible alternatives but not required duplicate stacks. Neural rankers remain optional because of CPU cost and less transparent integration.
 
 ## 20. Training Strategy
 
-| Level | Data/profile | Candidate/features | Search and controls | Purpose |
-|---|---|---|---|---|
-| Smoke | Tiny deterministic fixture or 100–500 queries | Judged pool; minimal and full-schema subsets | Fixed params, 1–2 threads, tens of trees | Validate contracts in minutes and CI-friendly paths |
-| Development | 5k–10k query groups / 50k–100k judgments | Hybrid candidates plus judged-pool track; cached full feature set | Early stopping; up to ~5 seeded trials; 2–4 threads | Feature iteration and debugging |
-| Portfolio | Required default at the lower bound: ~20k groups / ~200k judgments; scale toward 50k/500k only if measured memory allows | Frozen feature version and candidate config | Validation-selected config; ~5–10 trials on the 8 GB M3; sequential stages and controlled threads | Final ablations and report |
+| Level | Data | Controls | Purpose |
+|---|---|---|---|
+| Smoke | Hand-authored fixture or 100–500 groups | Fixed params, 1–2 threads, tens of trees | Validate contracts quickly |
+| Development | ~5k groups/~100k observed judgments | Cached features, early stopping, ≤5 seeded trials, 2–4 threads | Feature/model iteration |
+| Portfolio | ~20k groups/~400k observed judgments | Frozen features, ~5–10 sequential trials on M3/8 GB | Final local experiments |
+| Full reduced US (optional) | Up to 29,844 groups/601,354 judgments before quarantine | Champion config only | Optional scale extension |
 
-Exact counts are configuration targets, not promises; complete groups take precedence. The 8 GB reference workflow must demonstrate the portfolio profile at its lower bound rather than silently substituting the development profile. Trial count may be lowered when runtime or memory is excessive. Optuna is optional; a seeded parameter list/random search is sufficient and easier to reproduce. Feature Parquet is cached, model matrices use compact dtypes, and model trials run one at a time. Training records wall time, CPU/thread settings, peak RSS, machine details, and random seeds. No full-benchmark run is required.
+Query count controls profiles; judgment count is observed because rows cannot be sampled. Trials run sequentially with compact matrices and controlled threads. Record wall time, peak RSS, machine/OS, seeds, feature/data hashes, and early-stopping history. Optuna is optional; a seeded parameter list is sufficient.
 
 ## 21. Optional Neural Reranking
 
-The default optional model is `cross-encoder/ms-marco-TinyBERT-L-2-v2` because its small size and CPU latency make the feature demonstrable on a MacBook. `cross-encoder/ms-marco-MiniLM-L-6-v2` is a quality-oriented alternative that must be benchmarked before becoming a profile default.
+Default optional model: `cross-encoder/ms-marco-TinyBERT-L-2-v2`; `cross-encoder/ms-marco-MiniLM-L-6-v2` is the quality-oriented alternative. Score only the top 10–30 (default candidate 20) from LambdaMART using `(normalized query, versioned product document)` pairs, small batches, controlled threads, and no gradient state.
 
-For the top `K_neural` LambdaMART results (configurable 10–30, default candidate 20), format input as `(normalized query, versioned product text with field markers)`. Batch inference uses a small configurable batch, truncation metadata, `torch.no_grad`, and controlled threads. Scores are normalized within query using rank or validation-fitted standardization, then fused with LambdaMART through a validation-selected weighted sum or a tiny downstream linear calibration. The core LambdaMART ranking is retained for all remaining candidates.
+Validation selects score normalization/fusion. Every request emits one active-relevance contract:
 
-Cache keys include model revision, query hash, product ID, product-text hash, and preprocessing version. Cache storage is SQLite with a size/TTL maintenance policy. The model download is explicit; weights are not fetched at startup. Missing model, timeout, non-finite scores, or memory error emits a warning and returns LambdaMART order. Model/version, input count, batch latency, cache hit rate, and rank changes are logged.
+1. **Full-list comparable:** an explicit missing-neural rule maps every candidate onto a coherent fused scale; every candidate has an active score and `active_score_comparable=true`.
+2. **Rank-only promotion:** the neural head order is followed by the deterministic LambdaMART tail; active score is null for the whole list and `active_score_comparable=false`.
 
-This stage is complete when disabled: all required endpoints, tests, ranking, policy, and demo modes continue to work.
+The system never mixes neural-head and raw LambdaMART-tail values in one comparable score field. Disabled/failure behavior promotes LambdaMART unchanged. Cache keys include model revision, query hash, product/text hash, and preprocessing version. Missing model, timeout, memory error, or non-finite score skips the stage and logs the fallback.
 
-## 22. Marketplace Optimization
+## 22. Catalog Diversity Reranking
 
-Relevance ranking estimates which products satisfy the query according to ESCI. Marketplace optimization is a post-ranking **simulated policy** operating on predicted relevance and synthetic metadata. It cannot claim improved revenue, conversion, user welfare, or fairness.
+This optional stage reduces repeated brands and near-duplicate semantics after the active relevance order is finalized. Inputs are only product ID, official brand/color/text fields, normalized product embeddings, and active relevance scores/ranks.
 
-The policy first applies hard eligibility, then greedily selects results using a validation-configured utility:
+The default is deterministic greedy MMR-like selection over a bounded head/pool:
 
 ```text
-utility(p | selected) =
-    normalized_relevance(p)
-  + w_quality     * seller_quality_proxy(p)
-  + w_fulfillment * fulfillment_proxy(p)
-  - w_return      * return_risk(p)
-  + w_inventory   * inventory_health(p)
-  + w_explore     * new_product_bonus(p, selected)
-  + w_margin      * simulated_margin(p)
-  - w_seller_dup  * seller_duplication(p, selected)
-  - w_category_dup* category_duplication(p, selected)
+utility(product | selected) =
+    normalized_active_relevance(product)
+  - lambda_semantic * max_cosine_similarity(product, selected)
+  - lambda_brand * same_known_brand_penalty(product, selected)
 ```
 
-All terms are bounded and named in an audit. Predicted engagement/conversion is off by default in the required policy because it is simulated; an ablation may add it. Sponsored status never improves required organic order.
+If `active_score_comparable=true`, relevance uses a versioned query-local score normalization. Otherwise it uses a monotone reciprocal/percentile transform of active rank. The mode is recorded. Semantic similarity uses normalized product embeddings from the active catalog/model version. The brand penalty applies only when both products have the same non-missing normalized brand. Missing brands do not match one another, do not form an artificial group, and do not count toward a brand cap.
 
-The policy config includes objective weights, normalization method, hard caps, new-product target, relevance guardrail, exact-item protection, fallback rules, and version. Every final row records pre-policy rank, post-policy rank, utility components, constraints triggered, and simulated-field disclaimer.
+At each rank, choose the highest utility, then higher active relevance, then lower input rank, then lexical product ID. `lambda_semantic`, `lambda_brand`, pool size, output K, protected ranks, and optional brand cap are selected on validation. Disabled mode returns the active relevance order byte-for-byte/rank-for-rank.
 
-## 23. Marketplace Constraints
+Every output row records input/output ranks, active stage/score/rank/comparability, redundancy penalty, brand penalty, selected-against product where relevant, cap/relaxation actions, config ID, and reason code. This is a descriptive catalog-list operation, not a causal or fairness intervention.
 
-Hard constraints:
+## 23. Diversity Constraints and Relevance Guardrails
 
-- Remove `inventory_count <= 0`.
-- Respect explicit API price bounds against clearly labeled synthetic price.
-- No duplicate product IDs.
-- Cap a seller at configurable `M` products in top `K` where enough alternatives exist.
-- Preserve the top predicted/high-confidence Exact-like results via a conservative relevance threshold; evaluation uses real Exact labels only for audit, never online decisions.
+Candidate validity (catalog membership, valid product key/document, no duplicates) is enforced before relevance ranking. The diversity stage cannot remove candidates for unavailable external attributes.
 
-Soft/guarded constraints:
+Required guardrails for any promoted diversity configuration:
 
-- Target minimum new-product exposure when enough eligible new products exist.
-- Penalize low fulfillment/high cancellation/return risk.
-- Limit category-proxy repetition.
-- Keep query-level and aggregate relevance loss within a validation-selected NDCG budget during offline tuning.
+- configurable `top_k` and candidate pool with hard API maxima;
+- protect the first `P` active-relevance positions by default;
+- permit movement only when normalized relevance gap is within a configured bound, or use protected-rank rules when scores are not comparable;
+- optional hard same-known-brand cap in top K;
+- never treat missing brand values as one identity;
+- deterministic tie-breaking and complete pre/post lineage;
+- validation-selected maximum allowable mean NDCG@10 degradation, with NDCG@20 and tail/query losses reported;
+- Exact-product displacement counts and large-drop examples;
+- relevance-first fallback on missing embeddings, invalid config, infeasibility, or guardrail failure.
 
-Real ESCI labels are unavailable online, so the online relevance guard uses normalized LambdaMART score gaps and protected top ranks. Offline reports separately audit true Exact displacement and ΔNDCG.
+For an infeasible brand cap, first fill from uncapped missing-brand items and other known brands; if fewer than K remain, relax the cap minimally one slot at a time and record each action. It never returns fewer results solely to satisfy diversity. The catalog-validity duplicate rule never relaxes.
 
-| Method | Advantages | Weaknesses | Decision |
+Compared approaches:
+
+| Method | Strength | Weakness | Decision |
 |---|---|---|---|
-| Weighted score | Simple and fast | Cannot guarantee caps/exposure | Component of utility |
-| Greedy constrained reranking | Deterministic, auditable, `O(KC)`, supports feasibility logic | Not globally optimal | **Required default** |
-| MMR | Natural diversity/relevance trade-off | Requires similarity definition; weak hard constraints | Optional category/product diversity term |
-| Linear programming | Global continuous optimum | Awkward ordering and nonlinear diversity | Deferred |
-| Integer optimization | Expressive hard constraints | Solver dependency, latency, infeasibility handling | Production/offline research option |
-
-If a constraint is infeasible, the algorithm follows a declared relaxation order: retain stock constraint always; relax new-product minimum; relax category cap; relax seller cap only if fewer than `K` results would remain; never insert an out-of-stock product. Relaxations are returned in the policy audit.
+| Brand penalty only | Very interpretable | Misses semantic duplicates | Ablation |
+| Semantic MMR only | Captures near duplicates | Embedding errors/latency | Ablation |
+| Combined greedy utility | Fast, deterministic, auditable | Locally rather than globally optimal | **Optional default** |
+| Hard brand cap | Enforceable list constraint | Can be infeasible or harm relevance | Optional constraint |
+| Integer optimization | Globally expressive | Solver/dependency complexity | Deferred |
 
 ## 24. Personalization
 
-Personalization is future work because ESCI has no user/session histories. A production extension could add session queries/clicks, user or session embeddings, category preferences, brand affinity, price sensitivity, and recency features. It would require feature freshness contracts, consent and retention controls, anonymous/session cold-start fallbacks, position-bias correction, and evaluation beyond static relevance. New users fall back to contextual/global ranking. Sensitive attributes should not be inferred. Personalized features must not be simulated and presented as observed in the MVP.
+Personalization is future work because ESCI has no user or session history. A future system could use consented session context, recent queries, category/brand preferences, and user/session embeddings with retention, freshness, cold-start, and privacy controls. The required system always uses contextual query and catalog evidence only.
 
 ## 25. Offline Evaluation
 
-### 25.1 Metric definitions and ownership
+### 25.1 Metric table
 
-| Metric | Definition | Stage / interpretation |
+| Metric | Definition | Valid stage/use |
 |---|---|---|
-| Recall@K | relevant judged products retrieved in top K / all relevant judged products | Candidate retrieval; report thresholds `E`, `E+S`, optionally `E+S+C`. |
-| Precision@K | relevant judged results / judged results evaluated at K | Retrieval/ranking only on fully judged/fixed pools; open-catalog unjudged items make naive precision invalid. |
-| MRR@K | mean reciprocal rank of first relevant item by named threshold | Early retrieval/ranking. |
-| MAP@K | mean average precision over binary relevance threshold | Ranking; threshold must be explicit. |
-| NDCG@K | graded discounted gain normalized by ideal list | Primary ranking/reranking relevance metric; mapping/gains versioned. |
-| Unique sellers@K | mean distinct simulated sellers | Marketplace diversity. |
-| Seller HHI@K | sum of squared seller exposure shares | Concentration; lower means less concentration. |
-| Max seller share@K | largest seller count/K | Constraint/audit. |
-| Catalog coverage@K | unique products exposed across queries / eligible catalog | Aggregate coverage; synthetic policy context. |
-| New-product exposure@K | fraction of top-K items with simulated `is_new_product` | Exploration. |
-| Category diversity@K | unique category proxies or entropy | Product-list diversity; proxy caveat. |
-| Expected synthetic margin | exposure-weighted mean of simulated margin | Policy simulation only. |
-| Expected synthetic return risk | exposure-weighted mean simulated probability | Policy simulation only. |
-| Stock violations | count of results with zero simulated inventory | Must be zero post-policy. |
-| Relevance loss | NDCG after policy − before policy | Guardrail; report mean, CI, and slices. |
-| Stage latency | wall-clock p50/p95/p99 after warmup | System evaluation. |
-| Peak RSS/artifact bytes | process memory and file sizes | Resource evaluation. |
+| Recall@K | Retrieved judged-relevant products / all judged-relevant products | Catalog retrieval; threshold named (`E`, `E+S`, optional `E+S+C`) |
+| Exact Hit@K | Query has an Exact result in top K | Retrieval/ranking |
+| Known-judgment coverage@K | Returned products with judgments / returned products | Catalog retrieval diagnostic |
+| Unjudged rate@K | One minus known coverage | Catalog retrieval diagnostic |
+| Precision@K | Relevant / K | Closed judged pool only |
+| MRR@K | Reciprocal rank of first threshold-relevant product | Retrieval or closed pool with protocol named |
+| MAP@K | Mean binary average precision | Closed pool only |
+| NDCG@K | Official direct gains normalized by judged-pool ideal | Primary closed-pool ranking/diversity relevance |
+| Unique brands@K | Distinct non-missing normalized brands | Diversity; report known-brand denominator |
+| Brand HHI@K | Sum squared exposure shares among known brands | Diversity concentration |
+| Brand entropy@K | Entropy of known-brand exposure | Diversity concentration |
+| Intra-list diversity@K | Mean pairwise `1-cosine` among available product embeddings | Semantic diversity |
+| Product coverage@K | Unique product IDs exposed across queries / catalog | Aggregate diversity |
+| Duplicate violations | Repeated product IDs in a list | Must be zero |
+| Relevance delta | NDCG after diversity − before diversity | Signed diversity effect |
+| Relevance loss | `max(0, -relevance_delta)` | Guardrail harm measure |
+| Exact displacement | Exact items moved beyond configured positions/cutoff | Diversity audit |
+| Missing-brand rate | Missing brand values / evaluated results | Metric interpretability |
+| Stage latency | p50/p95/p99 wall time after warmup | System evaluation |
+| Peak RSS/artifact bytes | Process peak and persisted sizes | Resource evaluation |
 
-Candidate retrieval and open-catalog metrics use known judgments but distinguish unjudged. Ranker evaluation uses a fixed judged pool as the clearest supervised comparison and an end-to-end retrieved pool to measure actual pipeline loss. Marketplace metrics compare the identical pre-policy candidate ranking to post-policy output.
+Brand metrics describe catalog brand variety only and carry no fairness interpretation.
+
+### 25.2 Evaluation protocol matrix
+
+| Protocol ID | Candidate population | Allowed metrics | Prohibited interpretation |
+|---|---|---|---|
+| `closed_pool_task1_v1` | Complete official judged list/query | Official-gain NDCG, thresholded MRR/MAP/Precision, slices | Not retrieval from a catalog |
+| `retrieval_catalog_task1_us_v1` | BM25/dense/RRF results from fixed catalog | Judged Recall, Exact Hit, judged MRR, known coverage, unjudged rate, latency | No naive Precision/MAP/NDCG over unjudged items |
+| `end_to_end_diagnostic_v1` | Retrieved union scored by ranker | Retrieval metrics plus explicitly conditional ordering diagnostic | Not official Task 1 NDCG |
+| `closed_pool_diversity_v1` | Same closed judged list before/after optional diversity | Before/after NDCG@10/@20, signed delta/loss, Exact displacement, brand/semantic metrics, latency | No business or fairness claim |
+
+Every metric row includes protocol, candidate-population/catalog/profile IDs, stage/config IDs, threshold/gain mapping, query count, empty count, and known/unjudged counts where applicable.
 
 ## 26. Evaluation Methodology
 
-- Freeze one test query set and all artifact versions before final evaluation.
-- Use identical candidates when comparing ranking methods; use separate end-to-end evaluation when comparing retrievers.
-- Evaluate every method on the intersection of valid query groups and disclose dropped/empty groups.
-- Compute query-level metric values, then paired deltas. Bootstrap query IDs with replacement using a fixed seed for 95% confidence intervals; preserve all products in each resampled query.
-- Prefer paired intervals over declaring significance from overlapping unpaired intervals.
-- Report mean, median, and failure-tail examples where appropriate.
-- Slice by query token-length buckets, head/tail based on non-label catalog/query statistics, brand/price/entity presence, source, category proxy, and candidate relevant-count.
-- Report E-first performance, E/S binary retrieval, and behavior on complement-heavy queries.
-- Keep category proxy slices labeled derived/synthetic.
-- Measure cold and warm startup separately. Run warmup, repeated queries, single-threaded latency for comparability, plus modest-concurrency API tests.
-- Measure RSS with a platform-compatible method and record background conditions/hardware.
-- Manually inspect a seeded sample of wins, losses, parser failures, and large policy moves.
+- Freeze test queries, candidate populations, configs, and artifact versions before final evaluation.
+- Compare rankers on identical complete judged pools; compare retrievers on the identical fixed catalog.
+- Empty retrieval lists remain in the cohort and receive zero for applicable metrics.
+- Compute per-query metrics and paired deltas. Bootstrap normalized-query leakage groups with replacement using a fixed seed for 95% confidence intervals, preserving every query/product row in each sampled group.
+- Report mean, median, confidence interval, and tail examples where useful.
+- Slice by query length, lexical specificity, brand/color/model/compatibility presence, source, judgment composition, and head/tail based only on non-label statistics.
+- Report Exact-first and `E+S` retrieval behavior plus complement-heavy queries.
+- Benchmark cold and warm startup, warmed repeated request latency, and modest concurrency.
+- Record exact hardware, OS, power state, threads, and background conditions for RSS/latency.
+- Inspect a seeded sample of wins, losses, parser errors, and large diversity moves.
 
-No test-set result may select features, weights, candidate counts, or hyperparameters. Any post-test fix creates a new named evaluation generation and must be disclosed.
+Test results never select features, K values, neural fusion, diversity strength, or guardrails. A post-test correction creates a new named evaluation generation.
 
 ## 27. Required Ablation Studies
 
+### 27.1 Ablation plan
+
 | ID | Comparison | Fixed controls | Purpose |
 |---|---|---|---|
-| ABL-01 | BM25 only | catalog, queries, K, evaluator | Establish lexical baseline. |
-| ABL-02 | Dense only | same as ABL-01 | Isolate semantic retrieval. |
-| ABL-03 | Hybrid RRF vs best single | union cap and evaluation queries | Test complementary candidate coverage. |
-| ABL-04 | Hybrid ordering vs hybrid + LambdaMART | identical hybrid candidate pool | Measure learned ranker value. |
-| ABL-05 | LambdaMART without simulated marketplace features | same real/derived features and tuning budget | Establish relevance-first model. |
-| ABL-06 | LambdaMART with simulated marketplace features | same candidates/splits | Test whether synthetic signals change relevance; prevent hidden claims. |
-| ABL-07 | Before vs after marketplace policy | identical predicted ranking | Quantify relevance/diversity/risk trade-off. |
-| ABL-08 | Policy without vs with new-product/diversity terms | same constraints and pool | Attribute policy effects. |
-| ABL-09 | LambdaMART vs LambdaMART + optional cross-encoder | same top-K and downstream policy off first | Measure neural quality/latency trade. |
-| ABL-10 | Pointwise baseline vs LambdaMART | same features/candidates/training queries | Justify ranking objective. |
+| ABL-01 | BM25 retrieval | Catalog, query cohort, K, protocol | Lexical baseline |
+| ABL-02 | Dense retrieval | Same as ABL-01 | Semantic baseline |
+| ABL-03 | Hybrid RRF vs best single | Same catalog/cohort, fixed union cap | Complementary retrieval value |
+| ABL-04 | Closed-pool RRF vs LambdaMART | Identical judged pools/gains | Learned ordering value |
+| ABL-05 | Pointwise vs LambdaMART | Same rows/features/groups | Ranking-objective value |
+| ABL-06 | LambdaMART before vs after diversity | Same active relevance order and pool | Overall relevance/diversity trade-off |
+| ABL-07 | Diversity with vs without semantic penalty | Same brand term/guardrails | Semantic redundancy contribution |
+| ABL-08 | Diversity with vs without brand penalty/cap | Same semantic term/guardrails | Brand concentration contribution |
+| ABL-09 | LambdaMART vs LambdaMART + cross-encoder | Same closed pool/top-neural K; diversity off | Neural quality/latency |
+| ABL-10 | Cross-encoder order before vs after diversity | Same promoted relevance and diversity config | Keep neural and diversity effects attributable |
 
-Every ablation records metric deltas, CIs, latency, memory/artifact costs, config hashes, and query counts. Marketplace policy is evaluated both with policy off and on; otherwise neural/ranker gains could be confounded by changing constraints.
+Each row records protocol/population IDs, paired metric deltas/CIs, latency, RSS/artifact cost, config hashes, and query counts. Retrieval and closed-pool values never share an unlabeled metric column.
 
 ## 28. Position Bias and Counterfactual Evaluation
 
-This is an advanced optional module. Real impression/click logs would include request, displayed position, item, policy propensity, examination/click/conversion indicators, context, and time. Position bias occurs because higher items are examined more often independent of relevance.
-
-An educational simulator may generate examination probabilities by position and clicks conditional on examination plus a declared synthetic relevance response. It must live outside required evaluation and state that the log is simulated. Inverse propensity scoring weights outcomes by inverse logging-policy propensity but can have high variance; clipping and effective sample size are required. Self-normalized IPS improves stability. Doubly robust estimation combines a response model and propensity correction and is robust if either nuisance model is correct under assumptions.
-
-Counterfactual claims require positivity/support, consistent outcomes, known or estimated propensities, and no unmeasured confounding—assumptions not satisfied by ESCI alone. Therefore no counterfactual metric is used for the MVP completion gate.
+This optional research module requires impression logs with displayed positions, actions, and logging-policy propensities. ESCI has no such logs. A clearly isolated educational simulator may illustrate examination probability, inverse propensity scoring, self-normalized IPS, and doubly robust estimation, but no result from it enters the required benchmark or completion criteria. Claims require positivity, correct propensity handling, consistency, and no unmeasured confounding.
 
 ## 29. Explainability
 
-User-facing reason templates use verified, non-causal facts:
+User-facing reason templates are factual and predicate-backed:
 
 - “Strong title-term match”
 - “Brand matches your query”
-- “Within your requested price range (simulated price)”
-- “Category hint matches”
-- “High simulated seller fulfillment”
-- “Short simulated shipping estimate”
+- “Color matches your query”
+- “Model identifier matches”
+- “Strong semantic text match”
+- “Selected to reduce near-duplicate results”
 
-Reasons are emitted only when their predicate and confidence pass a threshold. The UI must not say “you will like,” “best,” or “caused by.”
-
-Developer debug output includes source candidates/ranks/scores; normalized feature values; LambdaMART score/rank; optional cross score; final utility components; constraint actions; stage-by-stage rank changes; artifact/model versions; and bounded TreeSHAP contributions on request when enabled. SHAP is never on the normal latency path. Sensitive raw descriptions may be truncated in logs.
+Developer debug output includes retrieval provenance, direct scores/ranks, feature values, LambdaMART score/rank, optional cross score, active stage/score/rank/comparability, diversity penalties/actions, stage-by-stage ranks, versions, and optional bounded TreeSHAP contributions. Explanations are associations and rule traces, never causal statements.
 
 ## 30. Local Storage and Artifact Management
 
 ### 30.1 Artifact dependency flow
 
 ```text
- raw checksums
-      |
- normalized tables ---> split/profile manifest
-      |                         |
-      +--> product documents <--+
-      |          |              |
-      |          +--> BM25 index|
-      |          +--> embeddings --> FAISS index
-      |                               |
-      +--> synthetic metadata         |
-                  \                   /
-                   --> candidates <---
-                          |
-                    feature schema/state
-                          |
-                    feature matrices
-                          |
-                    ranker model
-                          |
-           optional reranker + policy config
-                          |
-                    serving bundle
-                          |
-               evaluations + demo/API
+ raw checksums -> normalized tables -> split/profile manifests
+                         |                    |
+                         +-> catalog + judged pools
+                                     |
+                              product documents
+                                /          \
+                         BM25 index      embeddings -> FAISS
+                                \          /
+                           candidates + pair scores
+                                     |
+                            feature registry/matrices
+                                     |
+                          pointwise/LambdaMART model
+                                     |
+                     optional cross scores -> relevance promotion
+                                     |
+                         optional diversity configuration
+                                     |
+                     serving bundle + evaluations + reports
 
- A consumer is loadable only when every parent hash matches its manifest.
+ A consumer loads only when every parent hash matches its manifest.
 ```
 
-### 30.2 Artifact inventory
+### 30.2 Artifact catalog
 
 | Artifact | Format | Required metadata | Loaded when |
 |---|---|---|---|
-| Raw manifest | JSON | URL, license, size, SHA-256, retrieved UTC | Ingestion |
-| Normalized tables | Parquet | schema version, counts, source hash | Most offline stages |
-| Profile/split manifest | JSON + Parquet IDs | seed, group hash rule, counts/distributions | All profile workflows |
-| Synthetic tables | Parquet | generator/parameter version, seed, input hash, provenance banner | Features/policy/API |
-| Product documents | Parquet | template/tokenizer version, truncation, catalog hash | Index build/features |
-| Sparse index | Library-native + NumPy/JSON metadata | tokenizer, BM25 params, document map hash | API/retrieval evaluation |
-| Embeddings | `.npy` memory map + ID array | model revision, dimension, dtype, normalized flag | FAISS build/features/API as needed |
-| FAISS index | `.faiss` + manifest | index type/params, vector/ID hashes | API/retrieval evaluation |
-| Candidates | Partitioned Parquet | retriever/index IDs, K, fusion config | Feature generation/evaluation |
-| Feature registry/state | JSON/Parquet | names, dtypes, provenance, defaults, encoders | Training/API |
-| Feature matrix | Parquet, optional binary matrix | candidate/data/feature hashes, label inclusion | Training/evaluation |
-| Models | LightGBM text + JSON manifest | features, params, code/dependency versions, metrics | Evaluation/API |
-| Reranker cache | SQLite | model/input versions, size policy | Optional evaluation/API |
-| Policy config | YAML + validation report | weights, constraints, guardrail, validation run | Evaluation/API |
-| Experiment run | JSON/Parquet + optional MLflow files | lineage, config, hardware, metrics, status | Reporting |
-| Evaluation report | Parquet/JSON/Markdown/PNG | query set and every compared artifact hash | Portfolio/reporting |
-| Serving bundle | Directory manifest/pointers | full compatibility matrix and readiness mode | API startup |
+| Raw manifest | JSON | URL, license, bytes, checksum, retrieved UTC | Ingestion |
+| Normalized tables | Parquet | Schema, counts, source hash | Offline stages |
+| Split/profile manifest | JSON + query IDs | Hash rule, seed, nested counts, distributions | All experiments |
+| Catalog membership | Parquet + JSON | Predicate, source/product hashes, count, missing docs | Index/retrieval |
+| Closed judged pools | Parquet + JSON | Profile/split, group counts, label/gain mappings | Training/evaluation |
+| Resource reports | JSON/Markdown | Projected/measured bytes and RSS, catalog hash | M2/M3/M5/M6/promotion |
+| Product documents | Parquet | Template/tokenizer/truncation/catalog versions | Index/features |
+| Sparse index | Native + NumPy/JSON | BM25/tokenizer/document-map hashes | Retrieval/API |
+| Embeddings | `.npy` memmap + ID array | Model revision, dimension, dtype, norms | FAISS/features/diversity |
+| FAISS index | `.faiss` + manifest | Type/params/vector and ID hashes | Retrieval/API |
+| Candidates/pair scores | Partitioned Parquet | Index IDs, K, fusion, protocol/population | Features/evaluation |
+| Feature registry/state | JSON/Parquet | Names, dtypes, provenance, defaults, fit state | Training/API |
+| Feature matrix | Parquet/optional binary | Candidate/data/feature hashes, label inclusion | Training/evaluation |
+| Training population | JSON + query IDs | Predicates, exclusions, distributions, feature/scorer IDs | Training/promotion |
+| Models | LightGBM text + JSON | Features, gains, params, dependencies, metrics | Evaluation/API |
+| Cross cache | SQLite | Model/input versions and size policy | Optional stage |
+| Promoted relevance | Parquet/JSON | Active stage, components, fusion mode, nullable score, rank, comparability, fallback | Diversity/API |
+| Diversity output/config | Parquet/JSON + YAML | Input/output ranks, penalties, actions, lambdas, cap, guardrails, validation run | Optional evaluation/API |
+| Experiment run | JSON/Parquet + optional MLflow | Full lineage, hardware, metrics, status | Reporting |
+| Evaluation report | Parquet/JSON/Markdown/plots | Every compared artifact and protocol hash | Portfolio |
+| Serving bundle | Immutable directory manifest | Compatibility matrix and readiness mode | API startup |
 
-Paths follow `artifact_type/dataset_version/profile/component_version/config_hash/`. Manifests include created UTC and Git commit or `dirty:<diff-hash>`. Writes are temporary then atomic. “Latest” may be a human-readable pointer but services load an explicit immutable bundle ID. Large/data artifacts are Git-ignored.
+Paths follow `artifact_type/dataset_version/profile/component_version/config_hash/`. Writes use temporary locations and atomic promotion. “Latest” is not a serving dependency; the API loads an explicit bundle ID. Large artifacts are Git-ignored.
 
 ## 31. Experiment Tracking
 
-MLflow uses a local file or SQLite backend and local artifact directory; no server is required for runs. A lightweight canonical `run.json` plus long-form `metrics.parquet` is always written so reproduction does not depend on MLflow. Starting the MLflow UI is optional.
+Canonical `run.json` and long-form `metrics.parquet` are always written. MLflow may mirror them into a local file/SQLite backend; no server is required.
 
-Track dataset release/checksums/profile/split, feature set, code revision and dirty state, model/retriever/index versions, hyperparameters, seeds, thread counts, candidate counts, all metric definitions/values/CIs, policy metrics, latency distributions, peak RSS, artifact paths/hashes, machine/OS/Python/package versions, and run status. Nested trials link to a parent study. Failed runs retain config and error summary but are never promoted.
-
-Run comparison scripts read canonical files, not UI state. A successful final report names exactly one champion relevance bundle and one champion policy config selected on validation.
+Track dataset/checksums/profile/split, benchmark predicate, catalog/population/protocol IDs, label/gain mappings, training population, feature set, code revision/dirty hash, retriever/index/model IDs, active relevance contract, optional diversity config, hyperparameters, seeds, threads, candidate counts, metrics/CIs, latency, peak RSS, artifact paths/hashes, environment versions, hardware, and status. Failed runs retain their config/error but cannot be promoted. Final reporting names one validation-selected relevance bundle and, separately, an optional diversity configuration.
 
 ## 32. Configuration Management
 
-YAML is the user-facing declarative format; strict typed validation rejects unknown keys. Suggested layered configs:
+Use strictly validated YAML with unknown-key rejection:
 
-- `base.yaml`: paths, seed, locale, logging, thread counts.
-- `profiles/{smoke,development,portfolio,full}.yaml`: query/judgment targets and sampling.
-- `retrieval/*.yaml`: tokenization, BM25, model revision, K values, FAISS type, RRF.
-- `features/*.yaml`: feature groups and registry version.
-- `ranking/*.yaml`: gains, LightGBM params, search space, early stopping.
-- `reranker/*.yaml`: enabled/model/revision/top-K/batch/cache/fusion.
-- `marketplace/*.yaml`: generator and policy weights/constraints.
-- `evaluation/*.yaml`: cutoffs, thresholds, slices, bootstrap seed/count.
-- `serving/*.yaml`: explicit bundle ID, cache sizes, timeouts, strict/fallback readiness.
+- `base.yaml`: paths, seed, locale, logging, threads;
+- `profiles/*.yaml`: grouped query targets;
+- `catalogs/*.yaml`: immutable membership predicates;
+- `retrieval/*.yaml`: tokenization, BM25, dense model, K, FAISS, RRF;
+- `features/*.yaml`: feature groups/registry versions;
+- `ranking/*.yaml`: gains, LightGBM params/search/early stopping;
+- `reranker/*.yaml`: model, top K, batch, cache, fusion/comparability mode;
+- `diversity/*.yaml`: enabled, pool/K, lambdas, cap, protected ranks, guardrails;
+- `evaluation/*.yaml`: protocol, population, gains, cutoffs, slices, bootstrap;
+- `serving/*.yaml`: explicit bundle, caches, deadlines, strict/fallback mode.
 
-Resolution order is base → profile/component → explicit CLI overrides. The resolved config is validated, canonicalized with sorted keys, hashed, and copied into the run. Environment variables may override paths and ports but not silently change model semantics. Secrets are unnecessary.
+Resolution is base → component/profile → explicit CLI override. Canonical sorted resolved config is hashed and copied into the run. Environment variables may change paths/ports but not silently alter model semantics.
 
 ## 33. API Design
 
-### 33.1 Startup and online inference pipeline
+### 33.1 Online inference pipeline
 
 ```text
- STARTUP
- explicit bundle ID -> verify manifest DAG/checksums/schema
-                    -> load product display projection + metadata
-                    -> load BM25 + FAISS + query encoder
-                    -> load feature state + LambdaMART
-                    -> optionally load cross-encoder
-                    -> warm bounded probes -> readiness=true
+ STARTUP: bundle ID -> manifest DAG/checksums/schema -> load display projection,
+          BM25, FAISS, query encoder, feature state, LambdaMART
+          -> optionally load cross-encoder -> bounded warm probes -> ready
 
- REQUEST
- JSON query -> validate -> parse -> cache lookup
-            -> sparse || dense retrieval (bounded top-K)
-            -> union/RRF -> eligibility/dedupe
-            -> online features -> LambdaMART
-            -> [cross-encoder top 10–30]
-            -> marketplace constraints/policy
-            -> explanation assembly -> response + structured timings
+ REQUEST: validate -> parse -> BM25 || dense -> RRF/dedupe
+          -> direct pair scores/features -> LambdaMART
+          -> [optional neural] -> active relevance promotion
+          -> [optional diversity] -> explanations -> JSON + timings
 ```
 
 ### 33.2 Endpoints
 
-| Endpoint | Purpose | Request | Response | Errors/cache |
-|---|---|---|---|---|
-| `GET /health/live` | Process liveness | none | status, timestamp | Always cheap; no artifact details. |
-| `GET /health/ready` | Serving readiness | none | loaded component status and degraded flags | `503` if no acceptable relevance path. |
-| `POST /v1/search` | Ranked search | query string, top_k (bounded), mode, optional explicit price bounds, policy/neural flags, debug=false | request ID, results, timings, mode/fallbacks, synthetic disclaimer | `422` invalid; `503` no retriever/model; version-aware query cache. |
-| `GET /v1/model-info` | Model/config summary | none | safe model IDs, feature/policy versions, optional stage availability | Cached static; no local paths. |
-| `GET /v1/artifact-info` | Reproducibility summary | none | bundle/data/index hashes and creation metadata | Cached; hide unsafe filesystem details. |
-| `POST /v1/debug/explain` | Bounded developer rank trace | search request plus max candidates/result IDs | source ranks, feature/score/policy breakdown, warnings | Local-only by default; rate/size limited; SHAP optional and uncached separately. |
+| Endpoint | Purpose | Request | Response / errors |
+|---|---|---|---|
+| `GET /health/live` | Process liveness | None | Cheap status/timestamp |
+| `GET /health/ready` | Artifact readiness | None | Components/degraded flags; `503` without valid relevance path |
+| `POST /v1/search` | Ranked search | Bounded query, top K, `bm25|dense|hybrid|lambdamart`, optional neural/diversity flags, debug | Results, timings, active stage, fallbacks, versions; `422` invalid, `503` unavailable |
+| `GET /v1/model-info` | Safe model summary | None | Model/feature/diversity versions and availability |
+| `GET /v1/artifact-info` | Reproduction summary | None | Bundle/data/index hashes without unsafe local paths |
+| `POST /v1/debug/explain` | Bounded rank trace | Search request + bounded candidates/IDs | Provenance, features, component/active ranks, diversity actions; local-only default |
 
-Search modes are `bm25`, `dense`, `hybrid`, `lambdamart`; unsupported/unavailable requested modes return a clear error unless the request explicitly permits fallback. Results contain product ID, display fields, synthetic fields nested under `simulated_marketplace`, stage scores/ranks appropriate to debug level, reason codes, and final rank. ESCI labels appear only for known offline/demo queries and are marked ground truth; arbitrary user requests do not imply labels.
+Results may contain product ID, title, description snippet, brand, color, retrieval provenance, component and active relevance scores/ranks, comparability flag, optional diversity penalties/pre-post ranks, reason codes, timing, and artifact/model IDs. ESCI labels appear only for known evaluation queries and are explicitly ground truth. Caches include bundle/mode/options in keys and are bounded.
 
-API limits include query length, top-K maximum, body size, concurrent neural requests, and timeouts. Query/result caches include bundle and mode in keys and are bounded LRU/TTL. Startup does not download or build.
+FastAPI depends on the relevance bundle only. Missing diversity artifacts disable that option without affecting readiness.
 
 ## 34. Streamlit Demo
 
-The demo is a thin API client, not a second inference implementation. It provides:
+Streamlit is a thin API client and provides:
 
-- query box with examples and optional explicit price bounds;
-- top-K selector;
-- BM25/dense/hybrid/LambdaMART mode selector;
-- side-by-side BM25 versus selected mode;
-- marketplace policy toggle and optional neural toggle, disabled with an explanation when unavailable;
-- product cards with title, brand, color, text snippet, and nested **Simulated marketplace data** panel;
-- ESCI labels only for known evaluation queries;
-- score/reason breakdown and stage timings;
-- unique sellers, HHI, new-product exposure, and relevance delta when ground truth exists;
-- a rank-change slope/table visualization from retrieval → ranker → neural → policy;
-- artifact/model IDs and degraded-mode banner.
+- search box and ESCI-compatible examples;
+- bounded top-K selector;
+- BM25/dense/hybrid/LambdaMART comparison;
+- optional neural and diversity toggles with unavailable-state explanations;
+- cards using official product title, description snippet, brand, and color;
+- retrieval/score/provenance and stage latency breakdowns;
+- unique-brand, brand concentration/entropy, and intra-list-diversity metrics;
+- pre/post diversity rank-change visualization and reasons;
+- relevance effects only for known evaluation queries;
+- artifact/model/config identifiers and degraded-mode banner;
+- an always-available dataset-limitations note pointing to Section 8.6.
 
-The UI cannot silently call models directly, rebuild artifacts, or claim live Amazon results. Screenshots in the portfolio must visibly include the simulation disclaimer.
+The UI never calls models directly, rebuilds artifacts, or claims live Amazon behavior.
 
 ## 35. Repository Structure
 
 ```text
 ecommerce_market_ranker/
-├── ELEPHANT.md                  # Approved end-state design
-├── README.md                    # Setup, results, demo, limitations
-├── pyproject.toml               # Package, tools, dependencies
-├── lockfile                     # Deterministic platform-aware lock
+├── ELEPHANT.md
+├── README.md
+├── pyproject.toml
+├── lockfile
 ├── configs/
-│   ├── profiles/               # Dataset execution profiles
-│   ├── retrieval/              # Sparse/dense/hybrid configs
-│   ├── ranking/                # Features and ranker configs
-│   ├── marketplace/            # Synthetic generator and policy
-│   ├── evaluation/             # Metrics/slices/bootstraps
-│   └── serving/                # Explicit serving bundles/runtime
+│   ├── profiles/  catalogs/  retrieval/  features/
+│   ├── ranking/   reranker/   diversity/
+│   └── evaluation/  serving/
 ├── data/
-│   ├── raw/                    # Immutable downloaded inputs (Git-ignored)
-│   ├── interim/                # Validated normalized intermediates
-│   ├── processed/              # Canonical tables
-│   ├── samples/                # Profile query IDs/tables
-│   └── synthetic/              # Clearly isolated generated metadata
+│   ├── raw/  interim/  processed/  samples/
 ├── artifacts/
-│   ├── embeddings/             # Memory-mapped vectors and ID maps
-│   ├── indexes/                # BM25 and FAISS artifacts
-│   ├── features/               # Registry/state/matrices
-│   ├── models/                 # Ranker/reranker metadata
-│   └── evaluations/            # Machine-readable metrics/reports
+│   ├── embeddings/  indexes/  features/  models/
+│   └── rankings/  evaluations/
 ├── src/market_rank/
-│   ├── data/                   # Load, validate, sample, text build
-│   ├── query/                  # Query parser
-│   ├── retrieval/              # Sparse, dense, hybrid contracts
-│   ├── features/               # Shared feature definitions/state
-│   ├── ranking/                # Baselines, LambdaMART train/score
-│   ├── reranking/              # Optional cross-encoder
-│   ├── marketplace/            # Generator and policy optimizer
-│   ├── evaluation/             # Metrics, slices, bootstraps
-│   ├── serving/                # FastAPI schemas/lifecycle/routes
-│   └── utils/                  # Config, hashes, logging, manifests
-├── scripts/                    # Thin deterministic CLI entry points
-├── app/                        # Streamlit API client and presentation
+│   ├── data/  query/  retrieval/  features/  ranking/
+│   ├── reranking/  diversity/  evaluation/  serving/  utils/
+├── scripts/
+├── app/
 ├── tests/
-│   ├── unit/                   # Pure/fast toy tests
-│   ├── integration/            # Cross-component and reload tests
-│   ├── smoke/                  # Tiny end-to-end profile
-│   ├── regression/             # Golden metrics/contracts
-│   └── fixtures/               # Small redistributable synthetic fixtures
-├── notebooks/                  # Exploration only; imports package code
-├── experiments/                # Resolved run configs/metadata (large ignored)
-├── docs/                       # Goldfish docs, ADRs, operations
-└── reports/                    # Final tracked summaries/plots/screenshots
+│   ├── unit/  integration/  smoke/  regression/  fixtures/
+├── notebooks/
+├── experiments/
+├── docs/
+└── reports/
 ```
 
-Reusable logic belongs under `src/market_rank`; scripts validate arguments and call it. Notebooks may visualize or explore but cannot contain the only implementation of ingestion, features, metrics, training, or serving. `data/` is data lifecycle; `artifacts/` is expensive derived model/index state; `experiments/` is run lineage; `reports/` is curated communication.
+`src/market_rank` owns reusable logic. Scripts are thin CLI adapters. Notebooks only explore/import package code. `data` holds lifecycle tables, `artifacts` holds expensive derived state, `experiments` holds run lineage, and `reports` holds curated outputs.
 
 ## 36. Module and Interface Design
 
-Interface sketches are illustrative contracts, not implementation code.
+| Module | Responsibility | Inputs → outputs | Persistence / tests |
+|---|---|---|---|
+| `DatasetLoader` | Project official files under schema | paths → lazy frames | Raw manifest; missing/schema fixtures |
+| `DatasetSampler` | Filter benchmark, quarantine collisions, create nested groups | judgments/seed/targets → IDs/manifest | Determinism/leakage tests |
+| `CatalogBuilder` | Build label-value-independent catalog membership and judged pools | examples/products → manifests/tables | Predicate/checksum tests |
+| `ProductTextBuilder` | Create versioned documents/display text | products/template → documents | Golden Unicode/null/truncation tests |
+| `QueryParser` | Normalize and extract entities | raw query → parsed query | Curated fixtures; total-function behavior |
+| `SparseRetriever` | Build/load/search/pair-score BM25 | documents/query/product IDs → index/candidates/scores | Reload/search/pair parity |
+| `DenseRetriever` | Encode/build/load/search/pair-score | documents/query/product IDs → vectors/index/candidates/scores | Dimension/norm/exact fixtures |
+| `HybridRetriever` | Union/dedupe/RRF/truncate | source candidates/config → union | RRF/tie/duplicate tests |
+| `FeatureBuilder` | Shared pair feature contract | parsed query/products/candidates → frame | Registry/state/matrices; parity |
+| `Ranker` | Build population, train/load/predict | closed features/labels/groups → model/predictions | Group/gain/serialization tests |
+| `NeuralReranker` | Optional bounded scoring and promotion | query/head/base predictions → promoted relevance | Cache/fallback/comparability tests |
+| `CatalogDiversityReranker` | Optional deterministic brand/semantic reranking | promoted order/products/vectors/config → changed order/audit | Guardrail, missing-brand, cap, lineage tests |
+| `RankingEvaluator` | Enforce protocol-valid metrics/CIs/slices | rankings/judgments/protocol → metric facts/reports | Toy metrics/prohibited combinations |
+| `ArtifactRegistry` | Manifest DAG and bundle promotion | artifacts/IDs → verified bundle | Corruption/incompatibility tests |
+| `ExperimentTracker` | Canonical local runs | config/metrics/artifacts → run directory | Round-trip/failure tests |
+| `SearchOrchestrator` | Compose online stages/fallbacks | request/bundle → response | End-to-end/API tests |
 
-| Module | Responsibility / conceptual interface | Inputs → outputs | Persistence / dependencies | Errors and tests |
-|---|---|---|---|---|
-| `DatasetLoader` | Load official files with projection and schema contract | paths/profile → lazy frames | Raw manifest, Polars/Parquet | Missing/checksum/schema errors; fixture schemas |
-| `DatasetSampler` | Split/sample complete query groups | judgments, seed, targets → query IDs/manifest | Profile artifact | Impossible targets/group leakage; determinism tests |
-| `ProductTextBuilder` | Build versioned documents/display text | normalized products + template → documents | Document Parquet | Empty/oversize/Unicode; golden strings |
-| `MarketplaceMetadataGenerator` | Stable per-ID seller/product simulation | products, generator config → seller/product tables | Separate synthetic Parquet | Bounds/prohibited dependency; order invariance |
-| `QueryParser` | Normalize and extract entities/constraints | raw query → `ParsedQuery` | Parser/dictionary artifact | Never throws on valid bounded UTF-8; curated fixtures |
-| `SparseRetriever` | Build/load/search BM25 | documents or parsed query → index/candidates | Sparse index + ID map | Missing/corrupt index; reload/rank parity |
-| `DenseRetriever` | Build/load/search embeddings/FAISS | documents/query → vectors/index/candidates | `.npy`, FAISS, model revision | Dimension/model mismatch; tiny exact-search fixtures |
-| `HybridRetriever` | Merge/dedupe/truncate candidates | candidate lists + fusion config → candidates | Candidate Parquet offline | Non-finite/duplicate; RRF toy examples |
-| `FeatureBuilder` | Shared candidate feature contract | parsed query, products, candidates, metadata → frame | Registry/state/matrices | Missing required values/type/order; offline-online parity |
-| `Ranker` | Train/load/predict grouped ranks | features, labels, groups → model/predictions | LightGBM text + manifest | Invalid groups/features; serialization parity |
-| `NeuralReranker` | Optional bounded cross scoring | query + top products → scores/order | Model metadata + SQLite cache | Timeout/unavailable fallback; top-K bound/cache tests |
-| `MarketplaceOptimizer` | Eligibility and constrained greedy order | scored candidates + policy → final ranking/audit | Policy config/report | Infeasibility/metadata absence; constraint fixtures |
-| `RankingEvaluator` | Metrics, slices, CIs, comparisons | rankings + judgments + configs → metric facts/reports | Evaluation artifacts | Unjudged/empty group handling; known toy metrics |
-| `ArtifactRegistry` | Manifest DAG, compatibility, promotion | artifact paths/IDs → verified bundle | JSON manifests | Hash/schema/dependency mismatch; corruption tests |
-| `ExperimentTracker` | Canonical local run state | config/metrics/artifacts → run directory | JSON/Parquet + optional MLflow | Partial run/failure; round-trip tests |
-| `SearchOrchestrator` | Compose online stages and fallbacks | search request + loaded bundle → response | Query caches/logs | Deadline/component failures; integration tests |
-
-Public objects should be immutable dataclasses or validated models where practical. Boundary methods use explicit IDs/manifests rather than ambient global paths. Domain exceptions distinguish invalid data, missing artifact, incompatibility, unavailable optional stage, and request validation.
+Public boundaries use immutable dataclasses or validated models. Domain exceptions distinguish invalid data, missing/incompatible artifacts, unavailable optional stages, and invalid requests.
 
 ## 37. Testing Strategy
 
-- **Unit:** parser rules, stable hashing, document templates, RRF, feature formulas, gains, policy selection, metric math, manifests.
-- **Integration:** normalize→sample, build/load/query each index, candidate→features→model, policy after ranking, API with a tiny persisted bundle.
-- **Smoke:** one command builds a tiny fully synthetic fixture bundle and searches it; a gated ESCI smoke run validates real schema when data exists.
-- **Regression:** golden product document, candidate ranks, feature rows, known toy metric values, and serving response schema. Golden numbers include tolerance and version.
-- **Data validation:** all Section 38 checks per profile.
-- **Determinism:** shuffle input rows and vary chunking; stable sample and synthetic output must match. Same index/model settings must match declared tolerance.
-- **Artifact loading:** cold reload, checksum corruption, wrong vector dimension, wrong feature schema, old model version.
-- **API:** status codes, limits, degraded modes, caches, debug redaction, concurrency bound.
+- **Unit:** parser rules, document building, RRF, features, gains/NDCG, diversity utility, constraints, manifests.
+- **Integration:** normalize→sample; build/load/query indexes; candidate→feature→ranker; promoted relevance→diversity; API with tiny persisted bundle.
+- **Smoke:** one command builds a small hand-authored fixture bundle and searches it; a gated ESCI smoke run validates the official schema.
+- **Regression:** golden documents, candidates, feature rows, metric values, rank lineage, and API schema.
+- **Determinism:** shuffled input/chunking produces stable groups, fusion, diversity results, and hashes within native-library tolerance.
+- **Artifact:** cold reload, checksum corruption, dimension mismatch, feature mismatch, and old schema.
+- **API:** limits, errors, cache keys, degraded modes, concurrency, and debug redaction.
 
 Critical invariants:
 
-1. Every candidate key contains its request/query and active-catalog product.
-2. No query group crosses train/validation/test.
-3. Group sizes are positive, contiguous, and sum to matrix rows.
-4. Top-K contains no duplicate product IDs.
-5. Out-of-stock simulated products never survive post-policy.
-6. Seller caps and relaxation audits agree.
-7. Seeded marketplace generation is order- and chunk-invariant.
-8. Labels are absent from online features and generator inputs.
-9. Persisted indexes reload with candidate parity.
-10. Metrics match hand-computed toy examples including empty/no-relevant cases.
-11. API startup performs no download/index/embedding/training operation.
-12. Optional neural disable/failure preserves LambdaMART ordering before policy.
+1. Every candidate belongs to its request/query and active catalog.
+2. No normalized-query group crosses project splits.
+3. Group sizes are positive/contiguous and sum to matrix rows.
+4. No output contains duplicate product IDs.
+5. Every `ltr_core_v1` row has an official ESCI judgment.
+6. Direct sparse/dense scores exist for every closed-pool row.
+7. Label IDs and official gains remain distinct and reproduce hand-calculated NDCG.
+8. Development query IDs are nested in portfolio; catalog hash is identical.
+9. Empty retrieval lists stay in evaluation with zero applicable metrics.
+10. Bounded rank fractions are finite in `[0,1]`; singleton is `0.0`.
+11. Offline/online feature formulas match.
+12. Index/model reload preserves outputs.
+13. API startup performs no download, encoding, index build, or training.
+14. Neural disabled/failure promotes LambdaMART exactly.
+15. Active score is populated for all candidates only when comparable; otherwise null for all.
+16. Diversity disabled returns active relevance order exactly.
+17. Diversity reranking is deterministic and respects maximum pool/K.
+18. Missing brands never match one another or consume a shared cap bucket.
+19. Same-brand cap and minimal relaxation audit agree.
+20. Semantic penalty matches toy cosine examples.
+21. Relevance-first fallback activates on missing vectors/config/guardrail failure.
+22. Every diversity row has valid pre/post lineage and reason.
+23. NDCG loss and Exact displacement reports match toy lists.
+24. Diversity metrics match hand-computed examples.
 
-Network/model-download tests are opt-in. Performance tests record distributions and do not use brittle single-run thresholds in ordinary CI.
+Network/download and long performance tests are opt-in. Ordinary CI avoids brittle one-shot timing assertions.
 
 ## 38. Data Validation
 
-Use Polars expressions, DuckDB SQL assertions, and lightweight custom validators; Pandera is optional for small frames. Required checks:
+Required checks:
 
-- exact schema names, compatible dtypes, source checksum, and nonzero rows;
-- primary-key uniqueness and query-text consistency per query ID;
-- expected locale and label domains;
-- official split validity and no normalized-query group overlap after project split;
-- null rates and changes versus a stored expectation range;
-- duplicate/conflicting product and judgment handling;
-- nonempty usable product documents and nonempty queries;
-- every judgment/candidate product joins to exactly one product;
-- every candidate belongs to its query/request and active catalog;
-- query group counts/sizes are valid before model training;
-- price finite and positive; probabilities in `[0,1]`; ratings `[1,5]`; counts nonnegative;
-- synthetic metadata covers every product exactly once and seller joins resolve;
-- prohibited label columns absent from synthetic generator/online feature inputs;
-- embeddings are finite, dimension-consistent, normalized within tolerance, and aligned with IDs;
-- feature schema/order/dtypes match model manifest.
+- exact source schema/dtypes/checksums and nonzero rows;
+- primary-key uniqueness and consistent query text per ID;
+- supported locale, Task flag, split, and label domains;
+- no normalized-query split overlap;
+- complete group/profile nesting;
+- duplicate/conflicting product/judgment handling;
+- nonempty queries/documents and one product join per judgment/candidate;
+- catalog membership matches the label-value-independent predicate;
+- training population contains only included judged groups and audited exclusions;
+- label/gain mappings and protocol IDs are valid;
+- candidate keys, finite scores, ranks, deduplication, and bounds;
+- embedding dimensions, alignment, norms, and finite values;
+- feature schema/order/dtypes and no labels in online payloads;
+- active-relevance stage/rank/score/comparability completeness;
+- diversity input/output key equality, rank permutation, penalties, cap actions, and config lineage.
 
-Reports include pass/fail, severity, counts, sample offending keys, and artifact version. Hard invariant failures stop promotion; warnings such as high null rate require explicit acknowledgment in the run.
+Reports include severity, pass/fail, counts, sample offending keys, and artifact version. Hard failures block promotion.
 
 ## 39. Observability
 
-Emit structured JSON logs with UTC timestamp, level, event, request/run ID, bundle/model/index versions, mode, stage, duration, candidate input/output counts, cache hit, degraded/fallback reason, policy relaxation, and exception class. User query logging defaults to a salted hash plus length/parser flags; raw query logging is opt-in for local debugging.
+Structured JSON events contain UTC timestamp, level, request/run ID, bundle/catalog/index/model/config IDs, stage, duration, input/output counts, cache hit, fallback, warning/error class, and memory checkpoints. Raw queries are not logged by default; store a salted hash plus length/parser flags.
 
-Online timers cover parse, sparse, query embedding, dense, fusion, lookup/features, ranker, neural, policy, serialization, and total. Offline timers cover rows/second, batches, peak RSS checkpoints, artifact bytes, and cache/reuse decisions. A local metrics endpoint is optional; canonical request logs must be analyzable with DuckDB/Polars. Health exposes component status without stack traces or filesystem secrets.
+Online timers: parse, sparse, query embedding, dense, fusion, pair scoring/features, LambdaMART, neural, relevance promotion, diversity, serialization, and total. Diversity logs lambda/config, input/output K, cap relaxation, missing-brand count, and rank-change count. Offline logs rows/sec, batches, RSS, bytes, cache/reuse, and stage status. Logs remain analyzable with DuckDB/Polars.
 
 ## 40. Memory Management
 
-| Workflow | Loaded / streamed | Controls |
+| Workflow | Loaded/streamed | Controls |
 |---|---|---|
-| Ingestion | Projected Parquet scans, chunked joins, small validation aggregates | Polars lazy scan, predicate pushdown, DuckDB, avoid full pandas copies |
-| Index build | Product ID/document columns; sparse chunks or embedding batches | Truncation, batch encoding, temporary memmap, controlled threads |
-| Training | Candidate-aligned compact features and group arrays | Column projection, `float32`/small ints, categorical codes, cached matrices |
-| Evaluation | One method/stage partition plus query metrics | Streaming partitions, long-form outputs, bounded bootstrap arrays |
-| API startup | Display/product lookup projection, required metadata columns, sparse index, FAISS, ranker, parser dictionaries; optional models | Explicit bundle, do not also map the full embedding matrix unless a required feature cannot use returned dense scores, lazy-load the neural model, and avoid duplicate DataFrame copies |
-| Search request | Bounded source candidates, union ≤ configured cap, top neural subset | No full-catalog DataFrame copies; vectorized/batched feature computation |
+| Ingestion | Projected Parquet scans and small aggregates | Polars lazy/predicate pushdown, DuckDB, no full pandas copies |
+| Index build | Product IDs/documents or embedding batches | Truncation, batch 16–32 initially, memmap, controlled threads |
+| Training | Candidate-aligned compact features/groups | Column projection, float32/small ints, one trial/process at a time |
+| Evaluation | One stage/partition plus per-query metrics | Stream partitions and bounded bootstrap arrays |
+| API startup | Compact display lookup, sparse index, FAISS, query encoder, ranker, dictionaries | Explicit bundle, no duplicate full frames, lazy neural load |
+| Request | At most configured source/union/neural/diversity pools | Candidate-only vectorized work |
 
-Parquet is the canonical tabular format; DuckDB supports ad hoc joins/reports. NumPy memory maps avoid copying the full embedding matrix. Product display data may be a compact Arrow/Parquet lookup or DuckDB table rather than a large Python dictionary if profiling shows overhead. Intermediate objects are released between offline stages; process-per-stage execution naturally returns memory to the OS.
+Do not simultaneously retain offline training frames and serving artifacts. Separate stages/processes allow macOS to reclaim memory. Use FAISS reconstruction or bounded memory-map rows rather than copying the complete vector matrix into another structure.
 
 ## 41. Latency Targets
 
-Targets are warm, single-request design budgets on the 8 GB Apple M3 reference machine and are not guarantees.
+### 41.1 Latency budget
 
-| Stage | Target | Measurement notes |
+| Stage | Warm target | Notes |
 |---|---:|---|
-| Query preprocessing | < 50 ms | Includes parsing/entity dictionaries |
-| BM25 retrieval | < 200 ms | Index already loaded |
-| Query embedding + dense retrieval | < 200 ms | Model/index loaded; report cache hit/miss |
-| Candidate fusion/dedupe | < 50 ms | Union cap enforced |
-| Feature generation/lookups | < 250 ms | Candidate set only |
-| LambdaMART scoring | < 50 ms | Batch of ≤ configured union cap |
-| Marketplace reranking | < 100 ms | Greedy top-K |
-| Serialization/overhead | < 100 ms | Bounded response/debug off |
-| **Total without neural** | **target < 1 s** | Report p50/p95 after warmup |
-| Optional cross-encoder | < 2 s | Top 10–30, batch CPU |
-| **Total with neural** | **target < 3 s** | Report cache miss and hit separately |
-| API cold startup | measured, goal < 30 s | May load local models/indexes; never builds/downloads |
+| Query preprocessing | <50 ms | Parser/dictionaries |
+| BM25 retrieval | <200 ms | Loaded index |
+| Query embedding + dense search | <200 ms | Cache miss reported separately |
+| Fusion/deduplication | <50 ms | Union bounded |
+| Pair features | <250 ms | Union only |
+| LambdaMART | <50 ms | Batch score |
+| Diversity reranking | <100 ms | Optional bounded greedy stage |
+| Serialization/overhead | <100 ms | Debug off |
+| Total without neural | target <1 s | p50/p95 reported |
+| Optional cross-encoder | <2 s | Top 10–30 CPU |
+| Total with neural | target <3 s | Hit/miss separately |
+| Cold startup | goal <30 s | No build/download |
 
-If a target is missed, profile first, reduce to the declared lower-bound portfolio catalog or reduce candidate/top-neural K within approved ranges, switch FlatIP to validated HNSW for latency (not memory), or disable the optional stage. A compressed FAISS index may address memory only after a recall/latency comparison. Do not hide quality changes.
+Targets are design goals, not promises. For latency, reduce approved K values or validate HNSW. For memory, use compact representations only after quality comparison. Catalog membership never changes under the same catalog/protocol ID.
 
-### 41.1 Ranking-stage funnel
+### 41.2 Ranking-stage funnel
 
 ```text
- Portfolio catalog:          ~tens/hundreds of thousands products
-       BM25 top 150  ─┐
-                      ├─ union + dedupe ──> at most 200 candidates
-       Dense top 150 ─┘
-                                      |
-                              LambdaMART: 200
-                                      |
-                        optional cross-encoder: top 20
-                                      |
-                       eligibility + policy: pool ≤200
-                                      |
-                              response: top 10–50
-
- Counts are configurable validation-selected defaults, not dataset facts.
+ Fixed Task-1 US catalog:       tens/hundreds of thousands
+        BM25 top 150 ---\
+                         +--> RRF union/dedupe: <=200
+        dense top 150 --/              |
+                                  LambdaMART: <=200
+                                         |
+                              optional neural: top 20
+                                         |
+                         active relevance order: <=200
+                                         |
+                     optional diversity pool: configured <=200
+                                         |
+                                  response: top 10–50
 ```
 
-## 42. macOS Compatibility
+## 42. macOS and Optional Colab Compatibility
 
-- The required benchmark machine is an Apple M3 Mac with 8 GB unified memory. Final reports record whether it is a MacBook Air, MacBook Pro, or another M3 Mac, plus macOS version, power mode, and free memory.
-- Target Python 3.11 initially; pin an exact supported minor range in `pyproject.toml` after dependency compatibility is verified.
-- Use `venv`, `uv`, or Conda consistently; commit a deterministic lock with macOS ARM64 and x86_64 resolution guidance.
-- Prefer wheels for Polars, DuckDB, PyArrow, LightGBM, PyTorch, Sentence Transformers, and FAISS CPU.
-- Document a Homebrew `libomp` fallback for LightGBM only if the selected wheel/runtime needs it.
-- FAISS CPU packaging differs across pip/Conda and architectures; test the locked route on Apple Silicon, document a Conda fallback, and keep a NumPy exact-search smoke fallback for diagnostics—not portfolio operation.
-- PyTorch runs CPU by default. MPS on the M3 is optional, explicitly configured, and benchmarked for correctness, latency, and unified-memory pressure; no required code assumes CUDA or MPS.
-- Bound `OMP_NUM_THREADS`, BLAS, LightGBM, PyTorch, and tokenizer parallelism to prevent oversubscription. Begin with 2–4 compute threads and tune from measurements rather than using all cores automatically.
-- Keep a practical process-RSS target of 5.5 GB for required workflows. Run embedding, training, evaluation, and serving as separate processes/stages so memory returns to macOS between them; do not keep Polars/Pandas training frames alive while loading models or indexes.
-- Use `pathlib` and repository/config-relative paths; no Linux-only `/proc`, fork assumptions, or shell-only critical logic.
-- Multiprocessing entry points must be guarded for macOS `spawn`; deterministic chunk assignment is required.
-- Intel Macs use the same CPU path with potentially smaller batch/profile settings.
-- Docker is optional, does not replace native macOS documentation, and is not the required benchmark path on the 8 GB machine because its VM overhead reduces usable memory.
+- Required machine: Apple M3 with 8 GB unified memory; record exact Mac model, macOS, power state, and free memory.
+- Target Python 3.11 initially, subject to a locked compatible dependency set.
+- Prefer tested ARM64 wheels; document Intel fallbacks and Homebrew `libomp` only if LightGBM needs it.
+- FAISS CPU packaging must have a pinned macOS route plus a documented Conda fallback.
+- CPU is authoritative. MPS is optional and must pass numerical parity, latency, and unified-memory profiling.
+- Start with 2–4 compute threads and 16–32 embedding batch; avoid BLAS/PyTorch/LightGBM oversubscription.
+- Target ≤5.5 GB process RSS and run embedding, training, evaluation, and serving as separate stages.
+- Use `pathlib`; account for macOS `spawn`; avoid Linux-only assumptions.
+- Docker is optional and not the required benchmark path because VM overhead reduces available memory.
+
+Free Colab is an optional batch accelerator only. Suitable jobs are product embedding generation, optional cross scoring, or a separately named larger run. It must execute reusable package/CLI logic rather than notebook-only implementations, pin dependencies/model revisions, write manifests/checksums, and export platform-neutral artifacts. Colab’s variable hardware and ephemeral runtime cannot define final latency/RSS results, API serving, or the required local completion gate.
 
 ## 43. Failure Modes and Fallbacks
 
 | Failure | Detection | Behavior |
 |---|---|---|
-| Dense model unavailable | Startup model/cache check | Mark dense unavailable; hybrid→BM25 when fallback allowed. |
-| FAISS missing/corrupt | Manifest/checksum/load probe | Same fallback; readiness degraded; never rebuild online. |
-| Sparse index unavailable | Startup probe | Dense-only allowed if explicitly configured; otherwise not ready. |
-| Cross-encoder disabled/missing/timeout | Config/load/request deadline | Skip stage and preserve LambdaMART order. |
-| Marketplace metadata missing | Bundle validation | Relevance-only results with policy disabled and visible warning; strict bundle may fail readiness. |
-| Query parser rule fails | Caught domain error | Use minimal normalized query with empty structured attributes; log warning. |
-| No candidates | Source results empty after eligible filtering | Try allowed alternate retriever/relax only soft filters; return empty structured response, never fabricate. |
-| Only one retriever returns | Source status/candidate count | RRF works with one list; provenance and degraded flag set. |
-| Ranker incompatible | Feature/model manifest mismatch | Do not score; fall back to configured hybrid/heuristic or fail readiness in strict mode. |
-| Memory pressure | Startup estimate, 5.5 GB RSS guardrail, allocation exception, RSS monitoring | Avoid optional model, release stage processes, reduce configured batch/K, use memmap and lower-bound portfolio catalog; do not silently substitute the development profile. |
-| Policy infeasible | Feasibility audit | Apply documented relaxation order; stock constraint remains hard. |
-| Cache corrupt | Read/validation error | Evict affected entry/cache; compute without it. |
-| Unexpected model score | finite/range validation | Drop optional stage or fail ranker path; report. |
+| Dense model/index unavailable | Startup probe/checksum | Mark unavailable; hybrid→BM25 when allowed |
+| Sparse index unavailable | Startup probe | Dense-only if allowed; otherwise not ready |
+| One retriever returns nothing | Per-source count | RRF uses available list and marks degraded |
+| No candidates | Empty valid union | Return structured empty result; never fabricate |
+| Parser rule fails | Domain exception | Minimal normalization with empty entities |
+| Ranker incompatible | Feature/model manifest mismatch | Fall back to configured hybrid/heuristic or fail strict readiness |
+| Neural disabled/fails/times out | Config/deadline/score checks | Promote LambdaMART unchanged |
+| Diversity disabled/artifact missing | Bundle/options check | Return active relevance order; service remains ready |
+| Embeddings missing for diversity | Candidate/vector audit | Skip semantic term if config permits or relevance-first fallback |
+| Diversity config infeasible | Cap/guardrail audit | Minimal documented cap relaxation or relevance-first fallback |
+| Diversity guardrail fails offline | Validation report | Do not promote configuration |
+| Cache corrupt | Read/checksum error | Evict and recompute without cache |
+| Memory pressure | RSS/startup/allocation checks | Release stages, reduce approved batches/K, disable optional models; preserve catalog ID |
+| Unexpected score | Finite/comparability validation | Drop optional stage or fail affected relevance path |
 
 ## 44. Security and Privacy
 
-The system is local and has no real personal user data, but it still:
-
-- validates request schemas, Unicode, query length, top-K, body size, mode, and timeouts;
-- resolves artifacts only under allowlisted roots and does not accept request-supplied file paths;
-- verifies checksums and avoids loading untrusted pickle/joblib objects where safer native formats exist;
-- pins dependencies, runs vulnerability/license review, and never commits downloaded data/model caches;
-- binds to localhost by default and documents that public exposure needs authentication, TLS, and rate limiting;
-- bounds concurrent neural work to resist resource exhaustion;
-- redacts stack traces and local paths from API errors;
-- logs hashed queries by default and provides retention/deletion guidance;
-- never stores user profiles or claims enterprise-grade security.
+Validate query length/Unicode, top K, mode, body size, deadlines, and concurrency. Resolve artifacts only below allowlisted roots. Verify checksums and prefer native safe formats over untrusted pickle. Pin dependencies and review vulnerabilities/licenses. Bind locally by default; public exposure would require authentication, TLS, and rate limits. Redact traces/paths from responses, hash queries by default, and document log retention. ESCI supplies no real user profiles to this project.
 
 ## 45. Production-Scale Evolution
 
-### 45.1 Local versus hypothetical production architecture
+### 45.1 Local versus hypothetical production diagram
 
 ```text
- LOCAL PORTFOLIO                         HYPOTHETICAL PRODUCTION
- ----------------                         -----------------------
- ESCI + Parquet/DuckDB        ----->      Catalog/label lake + warehouse
- Polars single-node ETL       ----->      Distributed batch/stream processing
- bm25s local index            ----->      OpenSearch/Lucene retrieval tier
- FAISS CPU FlatIP/HNSW        ----->      Sharded ANN/vector service
- Parquet feature artifacts    ----->      Offline + online feature platform
- LightGBM local training      ----->      Managed distributed training jobs
- Files + local MLflow         ----->      Governed experiment/model registry
- In-process caches/SQLite     ----->      Distributed cache/feature services
- One FastAPI process          ----->      Autoscaled multi-region serving
- JSON logs + DuckDB           ----->      Central metrics/traces/log platform
- Streamlit demo               ----->      Marketplace web/mobile clients
-
- The stage contracts, schemas, lineage, fallbacks, and metrics migrate;
- infrastructure substitutions do not change the ranking semantics silently.
+ LOCAL PORTFOLIO                      HYPOTHETICAL PRODUCTION
+ ESCI + Parquet/DuckDB        ---->   governed catalog/label lake
+ Polars single-node stages    ---->   distributed batch/stream compute
+ bm25s local index            ---->   OpenSearch/Lucene retrieval tier
+ FAISS CPU                    ---->   sharded ANN service
+ Parquet feature state        ---->   offline/online feature platform
+ LightGBM on one Mac          ---->   scheduled training platform
+ files + local MLflow         ---->   experiment/model registry
+ FastAPI one process          ---->   autoscaled serving tier
+ greedy diversity module      ---->   dedicated diversification service
+ JSON logs + DuckDB           ---->   centralized metrics/traces/logs
+ Streamlit                    ---->   product search clients
 ```
 
-| Capability | Local implementation | Production analogue | Migration boundary |
-|---|---|---|---|
-| Data | Parquet + DuckDB/Polars | Data lake/warehouse + distributed compute | Normalized schemas/manifests |
-| Sparse | `bm25s` index | OpenSearch/Lucene shards | Retriever candidate contract |
-| Dense | FAISS CPU | Distributed ANN service | Normalized vector/query contract |
-| Features | Versioned Parquet + shared Python definitions | Feature store/batch compute | Feature registry and parity tests |
-| Training | LightGBM on one host | Scheduled/managed CPU jobs | Matrix/group/model manifest |
-| Artifacts | Content-addressed directories | Object store + model registry | Artifact DAG and promotion rules |
-| Tracking | JSON/Parquet + local MLflow | Hosted experiment platform | Canonical run schema |
-| Serving | FastAPI single process | Autoscaled service mesh | Search API schemas/SLOs |
-| Cache | LRU + SQLite | Redis/distributed cache | Versioned cache keys |
-| Observability | JSON logs + local analysis | Central logs/metrics/traces | Event schema and stage timers |
-| Policy | Greedy in process | Dedicated policy/reranking service or optimizer | Policy input/output/audit contract |
+### 45.2 Component mapping
 
-Production would add catalog updates, index shadow builds and atomic swaps, feature freshness, canaries, capacity planning, privacy controls, online experimentation, SLOs, and rollback. None is required locally.
+| Capability | Local | Production analogue | Preserved boundary |
+|---|---|---|---|
+| Data | Parquet, DuckDB, Polars | Lake/warehouse/distributed compute | Normalized schemas/manifests |
+| Sparse retrieval | `bm25s` | OpenSearch/Lucene | Candidate contract |
+| Dense retrieval | FAISS CPU | Distributed ANN | Vector/query contract |
+| Features | Versioned Parquet/shared functions | Feature platform | Registry/parity tests |
+| Training | LightGBM local | Managed jobs | Matrix/group/model manifest |
+| Artifacts | Content-addressed directories | Object store/registry | DAG/promotion rules |
+| Tracking | JSON/Parquet + local MLflow | Hosted platform | Canonical run schema |
+| Serving | FastAPI | Autoscaled service | HTTP/stage contracts |
+| Cache | LRU/SQLite | Distributed cache | Versioned keys |
+| Diversity | In-process greedy stage | Dedicated reranking tier | Input/output/audit contract |
+| Observability | JSON + local analysis | Central telemetry | Event/timer schema |
+
+Production adds catalog updates, shadow indexes, freshness, canaries, SLOs, rollback, privacy governance, and online experimentation. None is required locally.
 
 ## 46. Alternatives Considered
 
-| Alternative | Why not the required default | Reconsider when |
+| Alternative | Why not default | Reconsider when |
 |---|---|---|
-| Elasticsearch/OpenSearch locally | Service/JVM and operations obscure the ML workflow on a MacBook | Fielded retrieval/filters or production parity becomes the primary goal |
-| Pyserini required | Strong Lucene base but JDK setup and memory add friction | Reproducible local packaging is proven and BM25 semantics need Lucene |
-| Large neural retriever | CPU embedding/serving cost and memory | Hardware budget or quality evidence changes |
-| End-to-end transformer ranker | Expensive over candidate sets and weak structured-policy integration | GPU/latency budget and real interaction data exist |
-| Transformer fine-tuning | Violates required compute focus; high experiment cost | Optional future environment provides justified compute |
-| Hosted vector DB/model endpoint | Cost, network, credentials, offline failure | Never required; production organization may choose it |
-| GPU training | Not available and unnecessary for LambdaMART | Optional future neural work |
-| Reinforcement learning/bandits | No live rewards or safe exploration environment | Real logged/online feedback and governance exist |
-| Graph neural networks | No rich interaction graph; complexity exceeds evidence | Product/co-view/purchase graph becomes available |
-| LLM query rewriting | Paid/large local models violate simplicity and latency goals | Small local model shows measurable value |
-| Online learning | No real stream, hard reproducibility | Feedback, monitoring, rollback, and bias correction mature |
-| Collaborative filtering | No users/histories in ESCI | Privacy-reviewed interaction data exists |
-| Weighted normalized hybrid | Score calibration is query-sensitive | Validation shows stable improvement over RRF |
-| ANN required from start | FlatIP is simpler and exact at profile scale | Measured dense latency exceeds budget |
-| Integer-program policy | Solver/latency/infeasibility complexity | Global constraint value is proven offline |
+| Keep full synthetic marketplace simulation | Adds seller, inventory, price, shipping, fulfillment, margin, conversion, review, sponsorship, cancellation, and return-probability machinery without real observations | A legally usable dataset supplies those fields |
+| Retain simulation interfaces but disable them | Preserves complexity and weakens the focused scientific story | Never without a new approved use case |
+| Remove all post-ranking work | Loses a useful real/derived list-diversity demonstration | If diversity has no measurable value |
+| OpenSearch locally | JVM/service operations distract from ML workflow | Fielded/operational parity dominates |
+| Pyserini required | JDK and setup cost | Packaging/performance evidence justifies it |
+| Large neural retriever/ranker | CPU/memory cost | Hardware and measured value change |
+| Transformer fine-tuning | Outside required compute budget | Separate optional research environment |
+| Hosted vector/model service | Cost, credentials, network dependence | Production organization chooses it |
+| GPU-required training | Not necessary for tree ranker | Separate future neural objective |
+| LLM query rewriting | Complexity/latency and weak evaluation story | Small local model proves value |
+| Collaborative filtering | No user histories | Governed interaction data exists |
+| Treat unjudged as negative | Scientifically invalid | Only with new judgments |
+| ANN from start | FlatIP is exact/simple at benchmark scale | Measured latency requires it |
+| Integer diversity optimizer | Solver/latency complexity | Greedy method demonstrably insufficient |
 
 ## 47. Risks and Mitigations
 
+### 47.1 Risk register
+
 | Risk | Probability | Impact | Mitigation | Contingency |
 |---|---|---|---|---|
-| No behavioral labels | High | High | Limit claims to ESCI relevance and policy simulation | Add only future real/logged data module |
-| Synthetic marketplace signals misunderstood | Medium | High | Provenance namespaces, UI banners, separate tables/reports | Disable marketplace features/policy in default demo |
-| Open-catalog judgments incomplete | High | High | Call metric judged recall; fixed judged-pool rank evaluation | Report both tracks and unjudged rate |
-| CPU neural latency | High | Medium | Optional top-20 TinyBERT, batching/cache | Disable neural stage |
-| Embedding preprocessing time | Medium | Medium | Offline batches, checkpoints, profiles, memmap | Use development profile/resume |
-| Memory exceeds the 8 GB unified-memory envelope | High | High | Target ≤5.5 GB process RSS, run stages sequentially, lazy scans, compact dtypes, bounded K, memmaps, lower-bound portfolio default | Reduce to the declared portfolio lower bound; disable optional neural stage; test compressed FAISS only with recall report |
-| ESCI target leakage | Medium | High | Prohibited dependencies, registry review, out-of-fold rule | Remove suspect feature and rerun all affected experiments |
-| Query-group leakage | Medium | High | Normalized-query grouping and hard split tests | Invalidate artifacts and regenerate |
-| Product overlap misinterpreted | Medium | Medium | Report overlap and optional cold-start stress test | Qualify generalization claim |
-| Overengineering | Medium | Medium | Milestone acceptance, one default per stage, optional gates | Cut optional modules before core scope |
-| Hybrid/LambdaMART weak improvement | Medium | Medium | Fair candidates, feature audits, error slices | Publish honest result and retain simpler champion |
-| Unfair metric comparison | Medium | High | Fixed candidates/queries, paired bootstrap, config lineage | Invalidate and rerun comparison |
-| macOS FAISS/LightGBM issues | Medium | High | Pin tested wheels; Conda/Homebrew fallbacks | NumPy diagnostic; defer dense only if documented blocker |
-| Optional scope expansion | High | Medium | Neural/full/counterfactual feature flags and milestone gates | Ship complete core with options disabled |
-| Simulated policy harms Exact results | Medium | High | Score-gap protection, caps, validation NDCG budget, audits | Relevance-only fallback or weaker policy |
-| Category proxy is poor | High | Medium | Label it derived, confidence/missing state, slice review | Disable category constraints/features |
-| Artifact incompatibility | Medium | High | Manifest DAG, schema versions, startup probes | Fall back to prior promoted bundle |
-| Non-deterministic native libraries | Medium | Medium | Threads/seeds/version pin/tolerances | Record variance and deterministic evaluation mode |
+| Incomplete judgments outside supplied lists | High | High | Protocol-separated qrels-aware retrieval and closed-pool ranking | Publish unjudged rate and both tracks |
+| Query-group leakage | Medium | High | Normalized-query grouping and invariant tests | Invalidate/regenerate descendants |
+| Target leakage | Medium | High | Feature registry, prohibited aggregates, training-population manifest | Remove feature and rerun |
+| Closed-pool/online distribution shift | High | Medium | Direct pair features, bounded ranks, distribution report | Candidate-conditioned model only with valid labels |
+| Hybrid or LambdaMART weak gains | Medium | Medium | Fair pools, error slices, honest champion selection | Retain simpler method |
+| CPU neural latency | High | Medium | Optional top-20, cache, batches | Disable neural stage |
+| Fixed catalog exceeds memory target | High | High | Early sizing, component/combined load gates, memmaps | Validated compression; explicit catalog ADR if unresolved |
+| macOS dependency friction | Medium | High | Locked wheels and documented fallbacks | Disable only optional component or use alternate package |
+| Diversity harms relevance | Medium | High | Protected ranks, validation loss budget, Exact audit | Do not promote/disable diversity |
+| Brand missingness distorts metrics | High | Medium | Known-brand denominator/rate; missing values never grouped | Prefer semantic-only mode |
+| Embedding similarity creates false redundancy | Medium | Medium | Ablation and manual error sample | Disable semantic penalty |
+| Optional scope expands | High | Medium | Milestone gates and optional flags | Ship relevance core first |
+| Synthetic marketplace subsystem is reintroduced informally | Low | High | Explicit removal decision, no schemas/configs/modules/artifacts | Require new Elephant/ADR and real data source |
+| Colab artifacts drift from local environment | Medium | Medium | Pinned configs/revisions, neutral formats, local parity | Recompute locally |
+| Native-library nondeterminism | Medium | Medium | Seeds, threads, version pinning, tolerance | Record variance/deterministic mode |
+| Artifact incompatibility | Medium | High | Manifest DAG and startup probes | Fall back to prior bundle |
 
 ## 48. Implementation Milestones
 
-Each milestone ends in a working repository state. Complexity is relative (`S`, `M`, `L`). “Goldfish” lists likely documents, not full tasks.
+### 48.1 Milestone plan
 
-| Milestone | Objective | Inputs → outputs | Acceptance criteria | Dependencies | Complexity / likely Goldfish |
-|---|---|---|---|---|---|
-| M0 Environment | Package/tool/config skeleton and fixture conventions | Elephant → installable quality-gated repo | macOS setup, locked deps, tests/linters run | Approved Elephant | M / repo skeleton; config loader; artifact manifest |
-| M1 Ingestion/sampling | Official data load and complete-group profiles | raw files → manifests/sample IDs | checksums/schema; deterministic no-split groups | M0, downloaded data | M / downloader docs; loader; sampler |
-| M2 Processed data | Normalized Parquet and validation | raw + sample → canonical tables/reports | keys/joins/null/locale/label checks pass | M1 | M / normalizer; validator; text builder |
-| M3 BM25 baseline | Persisted sparse retrieval | documents → index/candidates | reload parity, unique top-K, latency/Recall report | M2 | M / tokenizer; sparse build; search |
-| M4 Evaluation | Correct reusable retrieval/ranking metrics | candidates + judgments → reports | hand-computed tests and judged caveat | M3 | M / metrics; reports; bootstrap |
-| M5 Dense | Offline embeddings and FAISS CPU | documents/model → vectors/index | resumable, finite/normalized, reload/latency | M2, model cached | L / embed pipeline; FAISS; dense retriever |
-| M6 Hybrid | RRF union and evaluation | sparse+dense → hybrid candidates | deterministic dedupe; fair comparison | M3–M5 | M / fusion; end-to-end retrieval report |
-| M7 Features | Shared feature registry/materialization | candidates + tables → matrices/state | provenance/leakage review; parity fixtures | M2, M6 | L / parser; feature groups; parity |
-| M8 LambdaMART | Train pointwise and ranker | grouped matrices → models | valid groups; early stopping; reload parity | M7 | L / baselines; trainer; serializer |
-| M9 Ranking eval | Fixed-pool/end-to-end ablations | models/predictions → reports | ABL-01–06/10 metrics, CIs, slices | M8 | M / scorer; ablation runner; explanations |
-| M10 Synthetic data | Deterministic seller/product layer | products + seed → separate Parquet | order invariance, bounds, no label access, disclaimer | M2 | M / generator; diagnostics |
-| M11 Policy | Marketplace-aware constrained reranking | relevance + metadata → final ranks/audit | stock/cap invariants; relevance/diversity report | M9, M10 | L / utility; constraints; policy tuning |
-| M12 Neural optional | Compact top-K cross reranker | model cache + top ranks → scores | bounded latency/cache/fallback; ABL-09 | M9 | M / wrapper; cache; fusion |
-| M13 FastAPI | Persisted-bundle serving | promoted artifacts → HTTP API | startup no rebuild; contract/degraded tests | M11; M12 optional | L / lifecycle; schemas/routes; orchestrator |
-| M14 Streamlit | Interactive comparison client | API → demo | modes/toggles/cards/labels/metrics render | M13 | M / API client; UI; visualizations |
-| M15 Hardening | Tests, profiling, docs, macOS verification | complete system → release candidate | required suites, latency/RSS/failure reports | M0–M14 | L / regression; profiling; runbooks |
-| M16 Portfolio | Frozen experiments and presentation | promoted bundle/test → final report | ablations/tables/screenshots/reproduction/limitations | M15 | M / final runs; README/report |
+| Milestone | Objective | Inputs → outputs | Acceptance criteria | Dependencies / complexity |
+|---|---|---|---|---|
+| M0 Environment | Quality-gated package skeleton | Elephant → installable repo | macOS setup, lock, lint/type/test commands | Approved Elephant / M |
+| M1 Ingestion/profiles | Task-1 US load and grouped profiles | Raw files → dataset/split/profile manifests | Checksums/schema/predicate/nesting/leakage audit | M0 / M |
+| M2 Normalized data | Canonical tables, documents, catalog/pools, sizing | M1 → Parquet/manifests/resource estimate | Keys/joins/gains/catalog exact; 5.5 GB proceed/block gate | M1 / M |
+| M3 BM25 | Persisted sparse retrieval and pair scoring | Documents/catalog/pools → index/candidates/scores | Reload parity, complete pair scores, metrics/RSS | M2 / M |
+| M4 Evaluation framework | Protocol-valid metrics/bootstrap | Candidates/judgments → reports | Toy gains, prohibited metric checks, fixed cohorts | M3 / M |
+| M5 Dense | Embeddings and FAISS CPU | Documents/model → vectors/index | Restart, norm/alignment/reload/latency/RSS | M2 + model cache / L |
+| M6 Hybrid | RRF and combined load gate | Sparse+dense → union/retrieval report | Determinism, fair comparison, combined RSS/catalog hash | M3–M5 / M |
+| M7 Query/features | Parser and `ltr_core_v1` | Pools/candidates/tables → matrices/state | Pair coverage, parity, leakage/distribution report | M6 / L |
+| M8 Rankers | Pointwise and LambdaMART | Closed matrices → population/models | Valid rows/groups/gains, early stop, reload | M7 / L |
+| M9 Ranking evaluation | Closed/end-to-end ablations | Models/predictions → reports | ABL-01–05, CIs, slices, protocol IDs | M8 / M |
+| M10 Neural optional | Cross reranker and relevance promotion | Model cache + ranks → active relevance | ABL-09, bounds/cache/fallback/comparability | M9 / M |
+| M11 Diversity optional | Greedy brand/semantic stage | Active relevance + products/vectors → ranks/audits | ABL-06–08/10, guardrails, metrics, deterministic tests | M9; M10 optional / M |
+| M12 FastAPI | Bundle-backed search | Relevance bundle; optional stages → HTTP | No rebuild, contracts, fallbacks, readiness | M9; M10/M11 optional / L |
+| M13 Streamlit | Interactive API client | API → demo | Modes/cards/metrics/rank changes/limitations | M12 / M |
+| M14 Hardening | Tests, profiling, documentation | Complete core → release candidate | Required suites, M3 latency/RSS, runbooks | M0–M13 / L |
+| M15 Portfolio | Frozen experiments/presentation | Promoted bundle/test → final report | Tables, ablations, screenshots, reproduction, limitations | M14 / M |
 
-Milestones M5 onward must not weaken earlier tests. M12 is skipped without blocking M13. M16 may conclude with an honest non-winning learned model if methodology is sound.
+Every milestone leaves a working repository. M10/M11 may be skipped without blocking M12. A change to promoted relevance invalidates diversity descendants by manifest hash. M15 may report an honest non-winning model/stage.
 
 ## 49. Goldfish Decomposition Strategy
 
-A Goldfish addresses one bounded, independently testable change in a short coding session. It cites the Elephant section/decision it implements, names exact files, inputs, outputs, public interfaces, configuration, tests, acceptance commands, failure behavior, and rollback. It does not reconsider architecture unless it files an explicit design-change question. Each Goldfish leaves the default branch installable and tests passing; generated/large artifacts stay out of Git.
+Each Goldfish implements one short, testable unit; cites relevant Elephant decisions; names exact files; defines inputs, outputs, configuration, acceptance commands, tests, failures, and rollback; and leaves the repository working. It cannot redesign settled architecture implicitly.
 
 Proposed first sequence:
 
-1. **Repository quality skeleton and macOS environment contract** — packaging, tool configuration, minimal test command, directory ownership, no ML logic.
-2. **Strict configuration loader and canonical config hashing** — typed schema, layering, unknown-key rejection, deterministic hash.
-3. **Artifact manifest and atomic stage-output protocol** — checksum/DAG contract with corruption tests.
-4. **ESCI raw manifest and schema validation** — projected loader plus tiny legal fixture.
-5. **Query-group split and deterministic profile sampler** — stable hash groups and leakage tests.
-6. **Canonical normalized tables** — products/queries/judgments/source with key audits.
-7. **Versioned product-document builder** — field markers, Unicode/missing/truncation fixtures.
-8. **Core ranking metric library** — Recall/MRR/MAP/NDCG toy goldens and unjudged policy.
-9. **Sparse tokenizer and smoke BM25 retriever** — simple in-memory reference.
-10. **Persisted sparse portfolio index adapter** — build/load/search parity and benchmark.
+1. Repository quality skeleton and M3/8 GB environment contract.
+2. Strict configuration loader and canonical hashing.
+3. Artifact manifest and atomic stage-output protocol.
+4. ESCI raw manifest and schema validator.
+5. Task-1 US filter and normalized-query split logic.
+6. Deterministic nested profile sampler.
+7. Canonical normalized query/product/judgment/source tables.
+8. Fixed catalog and closed-pool builder.
+9. Versioned product-document builder.
+10. Official-gain ranking metric library.
 
-Subsequent Goldfish follow milestone order. Avoid one Goldfish that simultaneously downloads ESCI, builds both indexes, trains a model, and serves an API; it would be hard to review and roll back.
+Later Goldfish follow milestone order. Never combine data download, both indexes, ranker training, and serving in one task.
 
 ## 50. Definition of Done
 
 ### 50.1 Checklist
 
-- [ ] Official ESCI data is ingested reproducibly with source, license, version, and checksums.
-- [ ] Development and portfolio profiles preserve complete query groups and are deterministic.
-- [ ] Normalized query/product/judgment tables validate and retain authoritative ESCI labels.
-- [ ] BM25 sparse retrieval builds, persists, reloads, searches, and is evaluated.
-- [ ] Offline product embeddings and FAISS CPU build, persist, reload, and search.
-- [ ] Hybrid retrieval deduplicates candidates, records provenance, and is evaluated fairly.
-- [ ] Ranking metrics pass toy examples and disclose incomplete-judgment limitations.
-- [ ] Query parsing and all feature groups have versioned definitions and offline/online parity.
-- [ ] Pointwise and LightGBM LambdaMART baselines train with valid query groups and serialize.
-- [ ] LambdaMART and required retrieval/ranking ablations have fixed-test metrics and CIs.
-- [ ] Synthetic marketplace metadata is reproducible, separate, bounded, and label-independent.
-- [ ] Marketplace reranking enforces stock/cap rules and reports relevance/diversity trade-offs.
-- [ ] Optional cross-encoder, if included, is bounded and can be disabled without loss of core function.
-- [ ] All expensive artifacts persist with manifests and reload with compatibility checks.
-- [ ] Local experiment records reconstruct configs, data, code, models, metrics, hardware, and paths.
-- [ ] FastAPI loads an explicit bundle and serves ranked results without rebuilding/downloading.
-- [ ] Streamlit compares modes and clearly labels all simulated fields.
-- [ ] Unit, integration, smoke, regression, determinism, artifact, data, and API tests pass.
-- [ ] Latency and peak-memory measurements are published against, not substituted by, targets.
-- [ ] Required development and lower-bound portfolio workflows run on the Apple M3/8 GB reference machine without CUDA, MPS dependence, or a paid API.
-- [ ] README covers setup, architecture, reproduction, results, limitations, and optional modules.
-- [ ] Final claims distinguish real labels, derived features, simulated metadata, and predictions.
+- [ ] ESCI source/license/version/checksums are recorded and ingestion is reproducible.
+- [ ] Primary benchmark is `us`, `small_version == 1`, with official split provenance and gains.
+- [ ] Development/portfolio profiles preserve complete nested query groups without leakage.
+- [ ] Fixed retrieval catalog and closed judged pools have reproducible membership manifests.
+- [ ] Resource gates measure sparse, dense, and combined serving RSS without changing catalog identity.
+- [ ] Normalized source tables and product documents pass validation.
+- [ ] BM25 builds, persists, reloads, pair-scores, retrieves, and is evaluated.
+- [ ] Product vectors and FAISS CPU build, persist, reload, pair-score, and retrieve.
+- [ ] Hybrid RRF deduplicates, records provenance, and is fairly evaluated.
+- [ ] Retrieval, closed-pool, and end-to-end diagnostic metrics remain protocol-separated.
+- [ ] Query parser and `ltr_core_v1` features are versioned and offline/online parity-tested.
+- [ ] Every primary ranker row is officially judged; no unjudged negative enters training.
+- [ ] Pointwise and LambdaMART train with correct groups/gains and serialize with parity.
+- [ ] Required ranking/retrieval ablations and query-level confidence intervals are reported.
+- [ ] Optional neural stage, if included, is bounded and failure-skippable.
+- [ ] Exactly one valid active-relevance contract exists per ranked request.
+- [ ] Optional diversity, if included, is deterministic, uses only source/derived catalog signals, and can be disabled with exact relevance-order parity.
+- [ ] Diversity reports brand/semantic metrics, NDCG deltas, Exact displacement, missing-brand rate, latency, and rank lineage.
+- [ ] No output contains duplicate products; cap relaxations and guardrail fallbacks are audited.
+- [ ] Expensive artifacts persist with compatible manifests and atomic success state.
+- [ ] Experiment records reconstruct data, code, config, models, hardware, metrics, and artifacts.
+- [ ] FastAPI loads an explicit relevance bundle without rebuilding or downloading.
+- [ ] Streamlit compares ranking modes and optional stages using official product fields.
+- [ ] Required test suites pass, including diversity-disabled parity and metric toy cases.
+- [ ] Latency and peak RSS are published against targets on the Apple M3/8 GB machine.
+- [ ] Required development and portfolio workflows run locally without CUDA, MPS dependence, or paid APIs.
+- [ ] README documents setup, architecture, protocols, results, reproduction, and limitations.
+- [ ] Final claims distinguish source, derived, predicted, and optional diversity outputs.
 
-Project completion does not require meeting a predeclared quality number, optional neural/full/counterfactual modules, or production deployment. It requires correct, reproducible evidence and an operational local core.
+Optional neural/diversity/full/counterfactual work is not required for core completion. Correct evidence and an operational relevance pipeline are required.
 
 ## 51. Portfolio Presentation
 
-The final README should lead with the problem, result summary, and truth statement, then show:
+README/report structure:
 
-1. one architecture diagram and a 60-second local demo path;
-2. exact environment/data/model download and artifact-build commands;
-3. a benchmark table for BM25, dense, hybrid, pointwise, and LambdaMART;
-4. an ablation table with paired confidence intervals;
-5. retrieval/ranking/policy funnel and latency/RSS table;
-6. before/after ranking examples with stage provenance;
-7. marketplace trade-off plots: NDCG delta versus seller HHI/new exposure/synthetic risk;
-8. demo screenshots with synthetic labels visible;
-9. reproducibility identifiers and instructions;
-10. limitations, failure cases, ethics/provenance, and future work.
+1. problem, scientific story, and measured headline;
+2. architecture and 60-second local demo;
+3. exact environment/data/model/artifact commands;
+4. separate retrieval-catalog and closed-pool ranking tables with protocol IDs;
+5. pointwise/LambdaMART/neural ablations with paired confidence intervals;
+6. optional diversity Pareto table/plot: relevance delta versus brand and semantic diversity;
+7. Recall@K curves, NDCG slices, stage-latency waterfall, RSS/artifact table;
+8. before/after rank examples with provenance and reason codes;
+9. demo screenshots, reproducibility IDs, limitations, and future work.
 
-Recommended figures include query-level win/loss distribution, Recall@K curves, NDCG by query slice, stage-latency waterfall, rank-change plot, seller exposure Lorenz/HHI comparison, and policy Pareto frontier. Do not cherry-pick examples without also presenting seeded/random error analysis.
+Suggested resume bullets, filled only with measured values:
 
-Honest resume bullet patterns:
+- “Built a CPU-first multi-stage product search system combining BM25, MiniLM/FAISS, RRF, and LambdaMART; evaluated on official Amazon ESCI Task 1 judgments with query-level bootstrap intervals.”
+- “Designed protocol-separated retrieval/ranking evaluation, versioned offline/online features, immutable artifacts, FastAPI serving, and an optional relevance-guarded diversity stage on an 8 GB M3 Mac.”
 
-- “Built a CPU-first multi-stage marketplace search prototype combining BM25, MiniLM/FAISS retrieval, LambdaMART, and constrained reranking; evaluated with query-level confidence intervals on Amazon’s public ESCI relevance judgments.”
-- “Designed reproducible offline/online feature and artifact contracts, deterministic synthetic policy metadata, FastAPI serving, and a Streamlit rank-trace demo on macOS.”
-
-Actual bullets must substitute measured profile sizes, metric deltas, p95 latency, and test counts only after final runs. Never imply real Amazon revenue, seller, conversion, or inventory modeling.
+Do not cherry-pick examples or imply live Amazon performance.
 
 ## 52. Future Work
 
-Future extensions, clearly outside the required system:
+Clearly separate future extensions include:
 
-- consented session histories and privacy-aware personalization;
-- real impression/click/purchase data and calibrated engagement models;
-- position-bias correction, propensity estimation, and counterfactual evaluation;
-- contextual bandits and guarded online experimentation;
-- local small-model query rewriting with measured latency/quality;
-- multimodal text/image product embeddings;
-- product/substitution/complement and seller graphs;
-- temporal inventory, shipping, price, and index updates;
-- learned return/cancellation risk on real governed outcomes;
-- seller-side objectives with formal marketplace welfare/fairness review;
-- production catalog ingestion, sharded retrieval, feature freshness, autoscaling, canaries, and centralized observability.
+- a legally usable real source for seller, inventory, price, shipping, fulfillment, margin, conversion, review, product-age, sponsorship, cancellation, and return-probability fields;
+- synthetic marketplace simulation only as a separately approved research sandbox, never retroactively part of this benchmark;
+- consented session/user histories and personalization;
+- real impression/action logs, position-bias correction, and counterfactual evaluation;
+- online experiments and contextual bandits;
+- local small-model query rewriting;
+- price-aware query understanding only after an authoritative catalog source exists;
+- multimodal product embeddings and graph-based retrieval;
+- temporal catalog/index updates and distributed serving.
 
-Every extension requires new data contracts, evaluation, privacy/ethical review, and a new decision record. It must not retroactively relabel synthetic MVP results as real.
+Every extension needs new data contracts, evaluation protocols, privacy/ethical review, and an explicit decision record.
 
 ## 53. Open Questions
 
-These do not block the architecture but must be resolved by the named milestone:
-
 | Question | Default assumption | Resolve by |
 |---|---|---|
-| Which official ESCI release/checksums are current at implementation time? | Pin the Amazon Science repository release retrieved for M1. | M1 |
-| Does `bm25s` meet install/reload/latency needs on both Mac architectures? | Yes; retain `rank-bm25` reference and Pyserini option. | M3 |
-| What exact profile query targets are feasible after preserving groups and splits? | 7.5k development and 20k portfolio are the 8 GB M3 defaults; scale upward only after profiling. | M1/M5 profiling |
-| Is FlatIP under 200 ms for the portfolio catalog on the reference Mac? | Use FlatIP unless measured otherwise. | M5 |
-| Is derived category quality adequate for a policy cap? | Category constraint off until coverage/precision audit passes. | M7/M11 |
-| Should simulated marketplace features enter the champion relevance ranker? | No; default champion is relevance-only unless validation evidence and disclosure justify otherwise. | M9 |
-| Which cross-encoder offers acceptable p95 CPU latency? | TinyBERT L-2; neural remains optional. | M12 |
-| What relevance-loss guardrail value should policy use? | Select from validation Pareto curve; no invented fixed claim. | M11 |
-| Which exact M3 Mac model and macOS version define the final benchmark? | Chip and memory are fixed at Apple M3/8 GB; record Mac model, OS, power state, and available disk in the final report. | M15 |
+| Which official release/checksums are current? | Pin Amazon Science files retrieved for M1. | M1 |
+| How many groups remain after normalized-query collision quarantine? | Target ~5k development and ~20k portfolio; report observed rows. | M1 |
+| Does `bm25s` install/reload efficiently on supported Macs? | Keep it default with `rank-bm25` smoke reference. | M3 |
+| Does the fixed combined bundle fit 5.5 GB and FlatIP meet latency? | Estimate M2, measure components M3/M5, combined M6. | M2–M6 |
+| Which optional cross-encoder meets p95 budget? | TinyBERT L-2 first. | M10 |
+| What diversity lambdas and NDCG loss budget are acceptable? | Select validation Pareto point; do not assume benefit. | M11 |
+| Is known-brand coverage sufficient for stable brand metrics? | Always report missing rate and query feasibility. | M11 |
+| Which exact M3 Mac/macOS defines final benchmark? | Chip/memory fixed; record model, OS, power, disk. | M14 |
 
 ## 54. Decision Log
 
-Each important decision uses the same fields and may be superseded only by an explicit ADR/Elephant revision.
+Each decision uses a consistent format and can be superseded only by an explicit ADR/Elephant revision.
 
 ### D-001 Dataset selection
 
-**Decision:** Use official Amazon Shopping Queries ESCI as the authoritative relevance dataset.
+**Decision:** Use English (`us`) reduced ESCI Task 1 (`small_version == 1`) with official gains.
 
-**Context:** The system needs grouped shopping query–product judgments and realistic product text.
+**Context:** The project needs public grouped product relevance judgments.
 
-**Options considered:** ESCI; generic web IR corpora; synthetic relevance; proprietary click logs.
+**Options considered:** ESCI; generic IR corpora; manufactured relevance; proprietary logs.
 
-**Chosen approach:** ESCI English `us` profiles, official test held out, real E/S/C/I labels unchanged.
+**Chosen approach:** Preserve official train/test provenance, grouped project validation, E/S/C/I labels, and gains `[0.0,0.01,0.1,1.0]`.
 
-**Rationale:** Public, large, domain-relevant, graded, and license-documented.
+**Rationale:** Domain-relevant, graded, public, and documented.
 
-**Trade-offs:** Bounded judged pools, no behavior, price, sellers, inventory, or canonical category.
+**Trade-offs:** Bounded judgments and missing business/behavior fields.
 
-**Future reconsideration trigger:** A legally usable dataset adds exhaustive catalog judgments or governed user interactions.
+**Future reconsideration trigger:** A legally usable stronger product-search benchmark appears.
 
-### D-002 Sparse retrieval library
+### D-002 Candidate populations
 
-**Decision:** Use `bm25s` or an equivalent persisted sparse CPU implementation as local default, with `rank-bm25` as smoke reference.
+**Decision:** Separate fixed closed judged pools, a fixed Task-1 retrieval catalog, and end-to-end diagnostics.
 
-**Context:** The MacBook path needs simple install, bounded memory, persistence, and fast reload.
+**Context:** Products outside a supplied query list are unjudged.
 
-**Options considered:** `rank-bm25`, `bm25s`/equivalent, Pyserini/Lucene, local OpenSearch.
+**Options considered:** Treat unjudged as negative; profile-specific catalog; fixed benchmark catalog plus named protocols.
 
-**Chosen approach:** Persistable sparse default plus a tiny transparent reference.
+**Chosen approach:** Use the last option; every metric carries protocol/population IDs.
 
-**Rationale:** Avoids JVM/service overhead and Python token-list cost while preserving BM25.
+**Rationale:** Prevents invalid labels and incomparable metrics.
 
-**Trade-offs:** Less production parity and a smaller ecosystem than Lucene.
+**Trade-offs:** More evaluation/reporting complexity.
 
-**Future reconsideration trigger:** Cross-architecture install fails, parity is incorrect, or measured performance misses budgets.
+**Future reconsideration trigger:** Exhaustive catalog qrels become available.
 
-### D-003 Dense model
+### D-003 Sparse retrieval
 
-**Decision:** Default to `sentence-transformers/all-MiniLM-L6-v2`.
+**Decision:** `bm25s`/equivalent persisted CPU index; `rank-bm25` smoke reference.
 
-**Context:** Required inference is CPU-first on an Apple M3 with 8 GB unified memory.
+**Context:** Need macOS-friendly BM25 persistence under tight memory.
 
-**Options considered:** all-MiniLM-L6-v2, multi-qa-MiniLM-L6-cos-v1, BGE-small-en-v1.5.
+**Options considered:** `rank-bm25`, `bm25s`, Pyserini, OpenSearch.
 
-**Chosen approach:** Pin an all-MiniLM-L6-v2 revision and normalize 384-D vectors.
+**Chosen approach:** Lightweight persisted default without required JVM/service.
 
-**Rationale:** Compact, widely supported, fast, and portfolio-recognizable.
+**Rationale:** Practical local performance and portability.
 
-**Trade-offs:** Not specifically fine-tuned for ESCI and may underperform larger/domain models.
+**Trade-offs:** Less production parity than Lucene.
 
-**Future reconsideration trigger:** Fixed-profile evaluation shows another compact model materially improves quality within latency/memory budgets.
+**Future reconsideration trigger:** Installation, correctness, or performance gates fail.
 
-### D-004 FAISS index type
+### D-004 Dense model and index
 
-**Decision:** Use CPU `IndexFlatIP` first.
+**Decision:** Pinned `all-MiniLM-L6-v2` plus CPU `IndexFlatIP` over normalized vectors.
 
-**Context:** Exact, reproducible retrieval is preferable at local profile scale.
+**Context:** Exact reference behavior must fit an M3/8 GB machine.
 
-**Options considered:** FlatIP, HNSW, IVF/PQ, GPU indexes.
+**Options considered:** MiniLM variants, BGE-small; FlatIP, HNSW, IVF/PQ.
 
-**Chosen approach:** Exact inner-product search over normalized vectors at the lower-bound portfolio size; validate HNSW only for latency and compressed IVF/PQ only for memory.
+**Chosen approach:** Compact 384-D model and exact FlatIP; HNSW for measured latency, compression for measured memory only after comparison.
 
-**Rationale:** No training, deterministic reference, simple persistence, manageable memory.
+**Rationale:** Simple, reproducible, and portfolio-relevant.
 
-**Trade-offs:** Linear query cost grows with catalog size.
+**Trade-offs:** Domain mismatch and linear scan.
 
-**Future reconsideration trigger:** Measured portfolio p95 exceeds budget or the combined serving bundle approaches the 5.5 GB process-RSS guardrail.
+**Future reconsideration trigger:** A compact alternative wins within quality/resource gates.
 
 ### D-005 Hybrid fusion
 
-**Decision:** RRF for initial order plus union for learned ranking.
+**Decision:** RRF pre-order plus candidate union.
 
-**Context:** BM25 and cosine scores have incomparable, query-varying scales.
+**Context:** Sparse/dense score scales differ by query.
 
-**Options considered:** Min-max weighted sum, z-score fusion, Borda/rank fusion, RRF, learned fusion.
+**Options considered:** Normalized weighted sums, Borda, RRF, learned fusion.
 
-**Chosen approach:** RRF with validation-configured constant, preserve raw source features for LambdaMART.
+**Chosen approach:** Validation-configured RRF with source evidence retained.
 
-**Rationale:** Robust, deterministic, transparent, little calibration burden.
+**Rationale:** Robust and transparent.
 
-**Trade-offs:** Ignores raw score magnitude in pre-rank order.
+**Trade-offs:** Pre-order ignores raw score magnitude.
 
-**Future reconsideration trigger:** A calibrated/learned fusion wins robustly on fixed validation and slices.
+**Future reconsideration trigger:** Calibrated fusion wins reliably.
 
-### D-006 Feature storage
+### D-006 Primary feature contract
 
-**Decision:** Parquet is canonical; compact in-memory/binary matrices are disposable accelerators.
+**Decision:** Use only source/derived query, product, pair, and direct-scoring features in `ltr_core_v1`.
 
-**Context:** Features need inspection, reuse, versioning, and CPU-efficient training.
+**Context:** Original top-K provenance has incompatible semantics between closed pools and retrieved unions.
 
-**Options considered:** CSV, SQLite/DuckDB only, Parquet, online feature store.
+**Options considered:** Include all source ranks; train only retrieved intersections; direct-score all judged pairs.
 
-**Chosen approach:** Partitioned Parquet with registry/state manifests and DuckDB/Polars reads.
+**Chosen approach:** Direct-score every pair, use bounded ranks/closed-set RRF, and isolate source-provenance features to a named optional model.
 
-**Rationale:** Columnar projection, types, compression, local tooling, no service.
+**Rationale:** Authoritative labels and online-available formulas for every row.
 
-**Trade-offs:** Point lookups require an adapter and online features still compute per request.
+**Trade-offs:** Closed-pool/online distributions still differ and require reporting.
 
-**Future reconsideration trigger:** Real-time feature freshness or multi-service serving becomes required.
+**Future reconsideration trigger:** A properly labeled candidate-conditioned dataset exists.
 
 ### D-007 Primary ranker
 
 **Decision:** LightGBM LambdaMART.
 
-**Context:** Mixed tabular/text-match features, graded labels, query groups, CPU budget.
+**Context:** Graded grouped labels, mixed features, and CPU constraints.
 
-**Options considered:** Heuristic, pointwise LightGBM, XGBoost Ranker, CatBoost ranker, neural ranker.
+**Options considered:** Heuristic, pointwise, XGBoost/CatBoost ranking, neural rankers.
 
-**Chosen approach:** LambdaMART with explicit gains and group arrays; pointwise remains baseline.
+**Chosen approach:** LambdaMART with explicit gains and group arrays; pointwise is baseline.
 
-**Rationale:** Ranking-aware, fast, explainable, mature, and strong on engineered features.
+**Rationale:** Ranking-aware, fast, mature, and explainable.
 
-**Trade-offs:** Cannot recover missed candidates and relies on feature quality.
+**Trade-offs:** Cannot recover missed candidates.
 
-**Future reconsideration trigger:** A competing ranker materially improves fixed-candidate NDCG within operational budgets.
+**Future reconsideration trigger:** Another ranker wins fairly within resource budgets.
 
-### D-008 Optional reranker
+### D-008 Feature storage
 
-**Decision:** TinyBERT L-2 cross-encoder over only top 10–30; MiniLM L-6 is optional quality alternative.
+**Decision:** Parquet is canonical; compact binary matrices are disposable accelerators.
 
-**Context:** Neural interaction may improve relevance but CPU latency is constrained.
+**Context:** Features need inspection, versioning, projection, and reuse.
 
-**Options considered:** No neural stage, TinyBERT, MiniLM L-6, large/fine-tuned models.
+**Options considered:** CSV, database-only, Parquet, service-backed store.
 
-**Chosen approach:** Optional, cached, bounded, failure-skippable stage.
+**Chosen approach:** Partitioned Parquet plus registry/state manifests.
 
-**Rationale:** Demonstrates neural reranking without making it an availability dependency.
+**Rationale:** Typed, compressed, local, and interoperable.
 
-**Trade-offs:** Domain mismatch and up to seconds of latency.
+**Trade-offs:** Online point lookup needs an adapter.
 
-**Future reconsideration trigger:** p95 exceeds budget, quality gain is negligible, or a smaller local model wins.
+**Future reconsideration trigger:** Real-time freshness/multi-service requirements emerge.
 
-### D-009 Marketplace optimization
+### D-009 Optional neural reranker
 
-**Decision:** Deterministic hard eligibility plus greedy constrained reranking.
+**Decision:** TinyBERT L-2 over top 10–30 with explicit active-score comparability.
 
-**Context:** Need to simulate diversity/quality/exploration while preserving relevance.
+**Context:** Neural text interaction may improve relevance but CPU latency is constrained.
 
-**Options considered:** Weighted score only, greedy constraints, MMR, LP, integer optimization.
+**Options considered:** No neural stage, TinyBERT, MiniLM L-6, larger/fine-tuned models.
 
-**Chosen approach:** Bounded utility with explicit caps, feasibility relaxation, and relevance guard.
+**Chosen approach:** Optional bounded stage that emits either a full-list comparable score or rank-only promotion and falls back exactly.
 
-**Rationale:** Fast, explainable, easy to test, and supports constraints.
+**Rationale:** Demonstrates the concept without becoming a dependency.
 
-**Trade-offs:** Not globally optimal; ordering depends on chosen normalization/weights.
+**Trade-offs:** Added latency and score-contract complexity.
 
-**Future reconsideration trigger:** Offline optimization proves meaningful global gains and solver latency/reliability is acceptable.
+**Future reconsideration trigger:** No quality gain, excessive p95, or a better compact model.
 
-### D-010 Experiment tracking
+### D-010 Catalog diversity
+
+**Decision:** Optional deterministic greedy reranking using active relevance, official brand data, and product embeddings.
+
+**Context:** Relevant lists can contain repeated brands and semantically near-duplicate products.
+
+**Options considered:** No post-rank stage; brand penalty; semantic MMR; combined greedy; integer optimization.
+
+**Chosen approach:** Combined greedy utility with ablations, protected relevance ranks, optional cap, and validation loss budget.
+
+**Rationale:** Meaningful multi-objective demonstration from real/derived evidence with low CPU cost.
+
+**Trade-offs:** It may reduce relevance and cannot imply fairness or business benefit.
+
+**Future reconsideration trigger:** Validation shows no useful Pareto point or a better method is justified.
+
+### D-011 Experiment tracking
 
 **Decision:** Canonical JSON/Parquet runs plus optional file-backed MLflow.
 
-**Context:** Reproduction must work without a running paid or local server.
+**Context:** Reproduction must work offline without a service.
 
-**Options considered:** MLflow-only, flat logs only, Weights & Biases, custom database.
+**Options considered:** MLflow-only, flat files, hosted tracking, custom database.
 
-**Chosen approach:** Portable files are source of truth; MLflow mirrors for UI.
+**Chosen approach:** Portable files are authoritative; MLflow mirrors for UI.
 
-**Rationale:** Zero-cost, offline, inspectable, and robust.
+**Rationale:** Free, inspectable, and robust.
 
-**Trade-offs:** Less collaboration/search functionality than hosted platforms.
+**Trade-offs:** Less collaboration functionality.
 
-**Future reconsideration trigger:** Multi-user governance and centralized registry needs emerge.
+**Future reconsideration trigger:** Multi-user governance is required.
 
-### D-011 API architecture
+### D-012 API architecture
 
-**Decision:** One FastAPI service loads an explicit immutable serving bundle; Streamlit is a client.
+**Decision:** One FastAPI process loads an immutable relevance bundle; Streamlit is a client.
 
-**Context:** Local inference needs realistic boundaries without microservice overhead.
+**Context:** Need realistic boundaries without local microservice overhead.
 
-**Options considered:** Notebook-only, Streamlit direct model calls, FastAPI monolith, separate services.
+**Options considered:** Notebook-only, direct Streamlit model calls, one API, separate services.
 
-**Chosen approach:** In-process modular stages behind versioned HTTP schemas.
+**Chosen approach:** Modular in-process stages behind versioned schemas; optional stages do not gate readiness.
 
-**Rationale:** Testable, debuggable, production-shaped, simple locally.
+**Rationale:** Testable and simple locally.
 
-**Trade-offs:** One process shares memory and cannot scale stages independently.
+**Trade-offs:** Components cannot scale independently.
 
-**Future reconsideration trigger:** Independent scaling, updates, or fault isolation become necessary.
+**Future reconsideration trigger:** Independent scaling/fault isolation is required.
 
-### D-012 Dataset profile sizes
+### D-013 Dataset profiles
 
-**Decision:** Three complete-query profiles with target ranges, not exact row slicing.
+**Decision:** Nested complete-query profiles controlled by query count.
 
-**Context:** Iteration speed and MacBook constraints differ from full benchmark research.
+**Context:** Row sampling breaks ranking groups; reduced US has fewer than 50k queries.
 
-**Options considered:** One full dataset, random rows, fixed first-N queries, seeded group profiles.
+**Options considered:** Full only, first-N, row sample, stable group sample.
 
-**Chosen approach:** Development 5k–10k queries/50k–100k judgments; portfolio 20k–50k/200k–500k with the 8 GB M3 required default at approximately 20k/200k; full optional.
+**Chosen approach:** ~5k development and ~20k portfolio groups; full reduced US optional.
 
-**Rationale:** Preserves ranking groups, supports quick iteration, and scales final evidence.
+**Rationale:** Fast iteration and honest scale within 8 GB.
 
-**Trade-offs:** Profile results are not full-dataset benchmark results, and the 8 GB reference prioritizes the lower end of the portfolio range over larger local runs.
+**Trade-offs:** Profile results are not full-dataset results.
 
-**Future reconsideration trigger:** Profiling supports larger groups or resource constraints require lower midpoint targets.
+**Future reconsideration trigger:** Resource profiling supports a larger separately named population.
+
+### D-014 Local-first with optional Colab
+
+**Decision:** Local execution is authoritative; Colab may accelerate isolated offline batches.
+
+**Context:** The M3 has limited memory, while hosted free resources are variable and ephemeral.
+
+**Options considered:** Local only; Colab primary; local core plus manifest-compatible remote batches.
+
+**Chosen approach:** Third option, with local artifact parity and final local serving/benchmarks.
+
+**Rationale:** Preserves reproducibility and macOS proof while providing a practical escape valve.
+
+**Trade-offs:** Additional artifact-transfer/version checks.
+
+**Future reconsideration trigger:** Required local workflow cannot meet resource gates after approved optimizations.
+
+### D-015 Remove synthetic marketplace metadata
+
+**Decision:** Remove synthetic marketplace metadata from the required system.
+
+**Context:** ESCI provides real relevance judgments and product text but no real seller, price, inventory, conversion, shipping, fulfillment, margin, review, product-age, sponsorship, cancellation, or return-probability data. The synthetic subsystem added substantial implementation and evaluation complexity while weakening the clarity of the project’s scientific claims.
+
+**Options considered:** (1) keep the full simulation; (2) make it optional but retain all interfaces; (3) remove it from the architecture and replace it with real/derived catalog-diversity reranking; (4) remove all post-ranking optimization.
+
+**Chosen approach:** Option 3.
+
+**Rationale:** It preserves a meaningful multi-objective demonstration using official brands, colors, product IDs, text, and derived embeddings while focusing the project on retrieval and learning-to-rank.
+
+**Trade-offs:** The project no longer demonstrates business/offer policies. It gains credibility, tractability, and a clearer portfolio narrative.
+
+**Future reconsideration trigger:** A legally usable dataset supplies real fields needed for those policies.
 
 ---
 
@@ -1622,4 +1586,4 @@ Each important decision uses the same fields and may be superseded only by an ex
 
 **Title:** Goldfish 001 — Repository Quality Skeleton and macOS Environment Contract
 
-**Scope:** Create only the minimal installable Python project structure, `pyproject.toml`, deterministic dependency-lock approach, Ruff/pytest/type-check/pre-commit configuration, Git ignore rules for data/artifacts/model caches, a tiny import/version module, and one smoke test. Document the required Apple M3/8 GB environment, additional Apple Silicon and Intel guidance, the 5.5 GB process-RSS target, and the initial-download/offline boundary. Do not ingest ESCI, implement configuration semantics, create retrievers, generate synthetic metadata, or add model code. Acceptance is a clean environment in which formatting, linting, type checks, and tests run successfully and no paid credential is referenced.
+**Scope:** Create only the minimal installable Python project structure, `pyproject.toml`, deterministic dependency-lock approach, Ruff/pytest/type-check/pre-commit configuration, Git-ignore rules for data/artifacts/model caches, a tiny version module, and one smoke test. Document Apple M3/8 GB setup, the 5.5 GB process-RSS target, optional manifest-compatible Colab batch execution, and the initial-download/offline boundary. Do not ingest ESCI, implement retrieval/model logic, or create optional diversity functionality. Acceptance is a clean environment in which formatting, linting, typing, and tests run without paid credentials.
