@@ -4,9 +4,9 @@ MarketRank is a planned CPU-first, multi-stage e-commerce search and ranking sys
 around the public Amazon ESCI Task 1 relevance judgments. The authoritative architecture is
 defined in [ELEPHANT.md](ELEPHANT.md).
 
-This repository has completed **Goldfish 002**: environment/tooling plus strict layered
-configuration loading and canonical configuration hashing. It intentionally contains no
-ingestion, retrieval, feature, training, serving, or demo logic.
+This repository has completed **Goldfish 003**: environment/tooling, strict layered
+configuration, and the manifest-backed atomic artifact lifecycle. It intentionally contains
+no ingestion, retrieval, feature, training, serving, or demo logic.
 
 ## Reference environment
 
@@ -113,6 +113,49 @@ print(resolved.sha256)
 Later Goldfish tasks will add component schemas. They must extend the typed root model rather
 than accepting arbitrary keys.
 
+## Artifact lifecycle
+
+[`market_rank.artifacts`](src/market_rank/artifacts.py) is the only stage-output promotion
+protocol. An `ArtifactStore` is rooted at one explicit allowlisted directory. Artifact IDs
+and paths follow:
+
+```text
+artifact_type/dataset_version/profile/component_version/config_sha256/
+```
+
+Writers use a temporary sibling directory and must explicitly commit inside the context. A
+commit hashes every regular payload file, writes a strict canonical `manifest.json`, writes a
+matching `_SUCCESS` marker, and atomically renames the directory into place. Exceptions and
+uncommitted contexts discard temporary output. Existing targets are immutable.
+
+```python
+from pathlib import Path
+
+from market_rank.artifacts import ArtifactStore
+from market_rank.config import load_config
+
+config = load_config([Path("configs/base.yaml")])
+store = ArtifactStore(config.config.paths.artifacts_dir)
+
+with store.stage(
+    artifact_type="example",
+    dataset_version="dataset-v1",
+    profile="development",
+    component_version="v1",
+    config_sha256=config.sha256,
+    code_revision="local-dev",
+) as stage:
+    stage.path("payload.txt").write_text("complete\n", encoding="utf-8")
+    artifact = stage.commit()
+
+verified = store.load(artifact.manifest.artifact_id)
+```
+
+Consumers load only explicit artifact IDs. Loading recursively verifies every declared parent
+artifact and fails closed on path escape, symbolic links, missing success state, undeclared
+files, byte-size or checksum changes, strict schema violations, or parent-manifest hash
+mismatches. “Latest” aliases are not dependencies.
+
 ## Download and offline boundary
 
 Internet access is allowed only during explicit setup operations:
@@ -154,12 +197,16 @@ ecommerce_market_ranker/
 ├── .pre-commit-config.yaml
 ├── configs/base.yaml
 ├── docs/goldfish/002-strict-configuration.md
+├── docs/goldfish/003-artifact-protocol.md
 ├── src/market_rank/
 │   ├── __init__.py
+│   ├── artifacts.py
 │   └── config.py
 └── tests/
     ├── smoke/test_import.py
-    └── unit/test_config.py
+    └── unit/
+        ├── test_artifacts.py
+        └── test_config.py
 ```
 
 Later directories and modules will be introduced only by approved Goldfish tasks.
