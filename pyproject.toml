@@ -20,7 +20,10 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = []
+dependencies = [
+  "pydantic>=2.11,<3",
+  "pyyaml>=6,<7",
+]
 
 [dependency-groups]
 dev = [
@@ -28,6 +31,7 @@ dev = [
   "pre-commit>=4,<5",
   "pytest>=8,<10",
   "ruff>=0.9,<1",
+  "types-pyyaml>=6,<7",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -73,4 +77,3 @@ select = [
   "SIM",
   "UP",
 ]
-

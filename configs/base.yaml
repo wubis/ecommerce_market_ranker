@@ -1,0 +1,19 @@
+schema_version: 1
+project:
+  name: market-rank
+  locale: us
+paths:
+  data_dir: data
+  artifacts_dir: artifacts
+  experiments_dir: experiments
+  reports_dir: reports
+runtime:
+  seed: 20260801
+  max_threads: 4
+  rss_limit_mb: 5632
+  offline: true
+logging:
+  level: INFO
+  format: json
+  log_raw_queries: false
+

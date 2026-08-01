@@ -4,8 +4,9 @@ MarketRank is a planned CPU-first, multi-stage e-commerce search and ranking sys
 around the public Amazon ESCI Task 1 relevance judgments. The authoritative architecture is
 defined in [ELEPHANT.md](ELEPHANT.md).
 
-This repository is currently at **Goldfish 001**: environment and quality-tooling setup only.
-It intentionally contains no ingestion, retrieval, feature, training, serving, or demo logic.
+This repository has completed **Goldfish 002**: environment/tooling plus strict layered
+configuration loading and canonical configuration hashing. It intentionally contains no
+ingestion, retrieval, feature, training, serving, or demo logic.
 
 ## Reference environment
 
@@ -79,6 +80,39 @@ complete resolved environment. Dependency changes must update both files with `u
 
 Do not hand-edit `uv.lock`.
 
+## Configuration contract
+
+[`configs/base.yaml`](configs/base.yaml) is the first versioned runtime configuration. Load it
+through `market_rank.config.load_config`; do not parse project YAML independently in future
+modules.
+
+The loader:
+
+- merges YAML files from left to right, recursively for mappings;
+- applies explicit dotted-key overrides last;
+- rejects duplicate YAML keys, non-string keys, unknown fields, and invalid types;
+- returns immutable Pydantic models;
+- serializes resolved semantics to canonical sorted JSON;
+- computes a full SHA-256 configuration hash;
+- records source paths for lineage without including machine-specific paths in that hash.
+
+Example:
+
+```python
+from pathlib import Path
+
+from market_rank.config import load_config
+
+resolved = load_config(
+    [Path("configs/base.yaml")],
+    overrides={"runtime.max_threads": 2},
+)
+print(resolved.sha256)
+```
+
+Later Goldfish tasks will add component schemas. They must extend the typed root model rather
+than accepting arbitrary keys.
+
 ## Download and offline boundary
 
 Internet access is allowed only during explicit setup operations:
@@ -118,8 +152,14 @@ ecommerce_market_ranker/
 ├── pyproject.toml
 ├── uv.lock
 ├── .pre-commit-config.yaml
-├── src/market_rank/__init__.py
-└── tests/smoke/test_import.py
+├── configs/base.yaml
+├── docs/goldfish/002-strict-configuration.md
+├── src/market_rank/
+│   ├── __init__.py
+│   └── config.py
+└── tests/
+    ├── smoke/test_import.py
+    └── unit/test_config.py
 ```
 
 Later directories and modules will be introduced only by approved Goldfish tasks.
