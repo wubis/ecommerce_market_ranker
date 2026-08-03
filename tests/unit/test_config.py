@@ -99,6 +99,17 @@ def test_dataset_profile_targets_must_be_nested() -> None:
         )
 
 
+def test_sparse_default_top_k_must_not_exceed_hard_maximum() -> None:
+    with pytest.raises(ConfigValidationError, match="default_top_k"):
+        load_config(
+            [BASE_CONFIG],
+            overrides={
+                "retrieval.sparse.default_top_k": 101,
+                "retrieval.sparse.max_top_k": 100,
+            },
+        )
+
+
 @pytest.mark.parametrize(
     "content",
     [

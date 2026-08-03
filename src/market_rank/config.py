@@ -88,6 +88,30 @@ class DatasetConfig(_StrictModel):
         return self
 
 
+class SparseRetrievalConfig(_StrictModel):
+    """Deterministic local BM25 build and query controls."""
+
+    tokenizer_version: Literal["unicode-word-v1"] = "unicode-word-v1"
+    component_version: Literal["bm25-v1"] = "bm25-v1"
+    k1: float = Field(default=1.2, strict=True, gt=0.0, le=5.0)
+    b: float = Field(default=0.75, strict=True, ge=0.0, le=1.0)
+    default_top_k: int = Field(default=150, strict=True, ge=1, le=1000)
+    max_top_k: int = Field(default=1000, strict=True, ge=1, le=5000)
+    sqlite_batch_rows: int = Field(default=10000, strict=True, ge=100, le=100000)
+
+    @model_validator(mode="after")
+    def validate_top_k(self) -> Self:
+        if self.default_top_k > self.max_top_k:
+            raise ValueError("default_top_k must not exceed max_top_k")
+        return self
+
+
+class RetrievalConfig(_StrictModel):
+    """Versioned retrieval subsystem configuration."""
+
+    sparse: SparseRetrievalConfig = SparseRetrievalConfig()
+
+
 class LoggingConfig(_StrictModel):
     """Safe local logging defaults."""
 
@@ -104,6 +128,7 @@ class AppConfig(_StrictModel):
     paths: PathsConfig = PathsConfig()
     runtime: RuntimeConfig = RuntimeConfig()
     dataset: DatasetConfig = DatasetConfig()
+    retrieval: RetrievalConfig = RetrievalConfig()
     logging: LoggingConfig = LoggingConfig()
 
 
@@ -272,6 +297,8 @@ __all__ = [
     "PathsConfig",
     "ProjectConfig",
     "ResolvedConfig",
+    "RetrievalConfig",
     "RuntimeConfig",
+    "SparseRetrievalConfig",
     "load_config",
 ]

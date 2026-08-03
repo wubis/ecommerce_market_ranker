@@ -14,6 +14,7 @@ from market_rank.data.download import DownloadPolicy, download_validate_esci
 from market_rank.data.esci_raw import RawDataError, RawDataValidationError, load_release_manifest
 from market_rank.data.foundation import DataFoundationError, build_esci_foundation
 from market_rank.data.profiles import ProfileBuildError, build_esci_profiles
+from market_rank.retrieval.sparse import SparseRetrievalError, build_sparse_index
 
 DEFAULT_ESCI_MANIFEST = Path("configs/data/esci-release-7916cdf6ab75.json")
 DEFAULT_CONFIG = Path("configs/base.yaml")
@@ -120,6 +121,22 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="explicit lineage revision when Git discovery is unavailable",
     )
+
+    retrieval_parser = command_parsers.add_parser(
+        "retrieval", help="persisted candidate-retrieval lifecycle commands"
+    )
+    retrieval_commands = retrieval_parser.add_subparsers(dest="retrieval_command", required=True)
+    sparse_parser = retrieval_commands.add_parser(
+        "build-bm25",
+        help="build the deterministic persisted BM25 fixed-catalog index",
+    )
+    sparse_parser.add_argument("--manifest", type=Path, default=DEFAULT_ESCI_MANIFEST)
+    sparse_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    sparse_parser.add_argument(
+        "--code-revision",
+        default=None,
+        help="explicit lineage revision when Git discovery is unavailable",
+    )
     return parser
 
 
@@ -213,6 +230,28 @@ def _run_build_esci_foundation(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _run_build_bm25(arguments: argparse.Namespace) -> int:
+    config = load_config([arguments.config])
+    release = load_release_manifest(arguments.manifest)
+    result = build_sparse_index(
+        release,
+        config,
+        code_revision=_resolve_code_revision(arguments, arguments.config),
+    )
+    metadata = result.metadata
+    print(
+        f"BM25 index: {metadata.document_count} documents, "
+        f"{metadata.vocabulary_size} terms, {metadata.posting_count} postings"
+    )
+    print(
+        f"resource: {metadata.resource.index_payload_bytes} artifact bytes, "
+        f"peak RSS {metadata.resource.peak_rss_bytes}/{metadata.resource.rss_limit_bytes} bytes"
+    )
+    status = "reused" if result.reused else "published"
+    print(f"{status} sparse index: {result.artifact.manifest.artifact_id}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run one explicit CLI command and return a bounded process exit code."""
     parser = build_parser()
@@ -224,6 +263,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_build_esci_profiles(arguments)
         if arguments.command == "data" and arguments.data_command == "build-esci-foundation":
             return _run_build_esci_foundation(arguments)
+        if arguments.command == "retrieval" and arguments.retrieval_command == "build-bm25":
+            return _run_build_bm25(arguments)
     except RawDataValidationError as exc:
         print(
             f"error: raw ESCI validation failed ({_failed_check_count(exc)} checks failed)",
@@ -236,6 +277,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         DataFoundationError,
         ProfileBuildError,
         RawDataError,
+        SparseRetrievalError,
         ValueError,
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)

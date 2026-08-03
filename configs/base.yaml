@@ -26,6 +26,15 @@ dataset:
   bullets_max_chars: 2048
   description_max_chars: 4096
   m2_runtime_reserve_mb: 512
+retrieval:
+  sparse:
+    tokenizer_version: unicode-word-v1
+    component_version: bm25-v1
+    k1: 1.2
+    b: 0.75
+    default_top_k: 150
+    max_top_k: 1000
+    sqlite_batch_rows: 10000
 logging:
   level: INFO
   format: json

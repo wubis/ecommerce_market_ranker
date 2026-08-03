@@ -4,10 +4,10 @@ MarketRank is a planned CPU-first, multi-stage e-commerce search and ranking sys
 around the public Amazon ESCI Task 1 relevance judgments. The authoritative architecture is
 defined in [ELEPHANT.md](ELEPHANT.md).
 
-This repository has completed **Goldfish 006**: environment/tooling, strict layered
-configuration, atomic artifacts, pinned ESCI validation/download, deterministic Task-1 US
-profiles, and the canonical M2 data foundation. It intentionally contains no retrieval index,
-ranking metrics, embeddings, features, training, serving, or demo logic.
+This repository has completed **Goldfish 007**: environment/tooling, reproducible ESCI data
+foundations, and a persisted fixed-catalog BM25 baseline with protocol-safe metric primitives.
+It intentionally contains no dense embeddings, hybrid fusion, corpus-level retrieval report,
+ranking features/models, serving, or demo logic.
 
 ## Reference environment
 
@@ -267,6 +267,35 @@ uv run market-rank data build-esci-foundation
 All three commands are idempotent. After the explicit initial download they operate offline,
 verify their exact immutable parents, and reuse compatible outputs.
 
+## Build and load the BM25 baseline
+
+After the current data foundation exists, build the persisted fixed-catalog index:
+
+```bash
+uv run market-rank retrieval build-bm25
+```
+
+Goldfish 007 uses deterministic Unicode tokenization and an audited BM25 implementation. The
+build writes document-term frequencies to a temporary disk-backed SQLite table in bounded
+batches, then streams a sorted vocabulary, statistics, and compact typed posting arrays into an
+immutable `sparse-index` artifact. Runtime memory-maps those arrays; it never rebuilds or
+downloads at load time.
+
+Reusable package APIs support both catalog top-K search and explicit product-pair scoring. Pair
+scoring returns a finite value for every requested catalog product, including zero when no term
+matches, so later closed-pool features do not confuse top-K absence with missing evidence. Cold
+reload is exact and compatible command reruns reuse the existing artifact.
+
+The accompanying metric layer keeps candidate populations explicit:
+
+- `closed_pool_task1_v1` permits official-gain NDCG, thresholded precision/MAP/MRR, and Exact
+  Hit only when the complete judged product set is ranked;
+- `retrieval_catalog_task1_us_v1` permits judged Recall, Exact Hit, judged MRR, known-judgment
+  coverage, and unjudged rate, but deliberately exposes no naive catalog NDCG/MAP/precision.
+
+See [`docs/goldfish/007-sparse-retrieval-evaluation.md`](docs/goldfish/007-sparse-retrieval-evaluation.md)
+for persistence, formula, resource, and protocol details.
+
 ## Download and offline boundary
 
 Internet access is allowed only during explicit setup operations:
@@ -315,25 +344,35 @@ ecommerce_market_ranker/
 ├── docs/goldfish/004a-esci-download-command.md
 ├── docs/goldfish/005-task1-us-splits-profiles.md
 ├── docs/goldfish/006-data-foundation.md
+├── docs/goldfish/007-sparse-retrieval-evaluation.md
+├── docs/goldfish/consolidated-roadmap.md
 ├── src/market_rank/
 │   ├── __init__.py
 │   ├── artifacts.py
 │   ├── cli.py
 │   ├── config.py
-│   └── data/
+│   ├── data/
+│   │   ├── __init__.py
+│   │   ├── download.py
+│   │   ├── esci_raw.py
+│   │   ├── foundation.py
+│   │   └── profiles.py
+│   ├── evaluation/
+│   │   ├── __init__.py
+│   │   └── metrics.py
+│   └── retrieval/
 │       ├── __init__.py
-│       ├── download.py
-│       ├── esci_raw.py
-│       ├── foundation.py
-│       └── profiles.py
+│       └── sparse.py
 └── tests/
     ├── integration/test_esci_foundation.py
+    ├── integration/test_sparse_retrieval.py
     ├── smoke/test_import.py
     └── unit/
         ├── test_artifacts.py
         ├── test_config.py
         ├── test_esci_download.py
         ├── test_esci_profiles.py
+        ├── test_metrics.py
         └── test_esci_raw.py
 ```
 
