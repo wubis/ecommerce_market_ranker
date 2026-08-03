@@ -33,5 +33,6 @@ mlruns/
 notebooks/.ipynb_checkpoints/
 
 # Local pretrained-model caches, if configured inside the repository
+/models/
 huggingface-cache/
 torch-cache/

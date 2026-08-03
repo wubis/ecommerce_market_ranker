@@ -110,6 +110,26 @@ def test_sparse_default_top_k_must_not_exceed_hard_maximum() -> None:
         )
 
 
+def test_dense_defaults_pin_minilm_and_m3_batch_size() -> None:
+    dense = load_config([BASE_CONFIG]).config.retrieval.dense
+
+    assert dense.model_id == "sentence-transformers/all-MiniLM-L6-v2"
+    assert dense.model_revision == "c9745ed1d9f207416be6d2e6f8de32d1f16199bf"
+    assert dense.embedding_dimension == 384
+    assert dense.embedding_batch_size == 16
+
+
+def test_dense_default_top_k_must_not_exceed_hard_maximum() -> None:
+    with pytest.raises(ConfigValidationError, match="default_top_k"):
+        load_config(
+            [BASE_CONFIG],
+            overrides={
+                "retrieval.dense.default_top_k": 101,
+                "retrieval.dense.max_top_k": 100,
+            },
+        )
+
+
 @pytest.mark.parametrize(
     "content",
     [

@@ -4,10 +4,10 @@ MarketRank is a planned CPU-first, multi-stage e-commerce search and ranking sys
 around the public Amazon ESCI Task 1 relevance judgments. The authoritative architecture is
 defined in [ELEPHANT.md](ELEPHANT.md).
 
-This repository has completed **Goldfish 007**: environment/tooling, reproducible ESCI data
-foundations, and a persisted fixed-catalog BM25 baseline with protocol-safe metric primitives.
-It intentionally contains no dense embeddings, hybrid fusion, corpus-level retrieval report,
-ranking features/models, serving, or demo logic.
+This repository has completed **Goldfish 008**: environment/tooling, reproducible ESCI data
+foundations, persisted fixed-catalog BM25 retrieval, protocol-safe metric primitives, and a
+checkpointed MiniLM/FAISS dense retriever. It intentionally contains no hybrid fusion,
+corpus-level retrieval report, ranking features/models, serving, or demo logic.
 
 ## Reference environment
 
@@ -296,6 +296,32 @@ The accompanying metric layer keeps candidate populations explicit:
 See [`docs/goldfish/007-sparse-retrieval-evaluation.md`](docs/goldfish/007-sparse-retrieval-evaluation.md)
 for persistence, formula, resource, and protocol details.
 
+## Build and load the dense baseline
+
+Cache the exact pinned model only through the explicit network command, then run the dense build
+offline:
+
+```bash
+uv run market-rank retrieval cache-minilm --allow-network
+uv run market-rank retrieval build-dense
+```
+
+Goldfish 008 pins `sentence-transformers/all-MiniLM-L6-v2` to a full commit revision. Product
+documents are encoded on CPU in batches of 16 into a normalized 384-wide float32 `.npy` memmap.
+Each completed contiguous range is durably checkpointed, so an interrupted local job resumes at
+the first unfinished product instead of starting over.
+
+The builder creates an exact FAISS CPU `IndexFlatIP`, persists the ordered product/document map,
+and records build phases, artifact bytes, peak RSS, and deterministic warm query-latency samples.
+Search uses cosine-equivalent inner products with product-ID tie breaking. Explicit-pair scoring
+reads bounded rows from the vector memmap and covers every requested known catalog product even
+when it was absent from dense top-K.
+
+Runtime loading verifies immutable Goldfish 006 lineage, vector dtype/shape/norms, catalog
+ordinals, FAISS type/count/dimension, and query-encoder model identity. It never downloads model
+weights or rebuilds embeddings/indexes. See
+[`docs/goldfish/008-dense-retrieval-faiss.md`](docs/goldfish/008-dense-retrieval-faiss.md).
+
 ## Download and offline boundary
 
 Internet access is allowed only during explicit setup operations:
@@ -345,6 +371,7 @@ ecommerce_market_ranker/
 ├── docs/goldfish/005-task1-us-splits-profiles.md
 ├── docs/goldfish/006-data-foundation.md
 ├── docs/goldfish/007-sparse-retrieval-evaluation.md
+├── docs/goldfish/008-dense-retrieval-faiss.md
 ├── docs/goldfish/consolidated-roadmap.md
 ├── src/market_rank/
 │   ├── __init__.py
@@ -362,9 +389,11 @@ ecommerce_market_ranker/
 │   │   └── metrics.py
 │   └── retrieval/
 │       ├── __init__.py
+│       ├── dense.py
 │       └── sparse.py
 └── tests/
     ├── integration/test_esci_foundation.py
+    ├── integration/test_dense_retrieval.py
     ├── integration/test_sparse_retrieval.py
     ├── smoke/test_import.py
     └── unit/

@@ -1,5 +1,25 @@
 """Persisted candidate-retrieval contracts."""
 
+from market_rank.retrieval.dense import (
+    DenseBuildError,
+    DenseBuildResult,
+    DenseCandidate,
+    DenseEncoder,
+    DenseIndex,
+    DenseIndexMetadata,
+    DenseIndexValidationError,
+    DenseModelError,
+    DensePairScore,
+    DenseQueryError,
+    DenseResourceError,
+    DenseResourceMeasurement,
+    DenseRetrievalError,
+    SentenceTransformerEncoder,
+    build_dense_index,
+    cache_dense_model,
+    dense_artifact_id,
+    load_dense_index,
+)
 from market_rank.retrieval.sparse import (
     SparseBuildError,
     SparseBuildResult,
@@ -19,6 +39,20 @@ from market_rank.retrieval.sparse import (
 )
 
 __all__ = [
+    "DenseBuildError",
+    "DenseBuildResult",
+    "DenseCandidate",
+    "DenseEncoder",
+    "DenseIndex",
+    "DenseIndexMetadata",
+    "DenseIndexValidationError",
+    "DenseModelError",
+    "DensePairScore",
+    "DenseQueryError",
+    "DenseResourceError",
+    "DenseResourceMeasurement",
+    "DenseRetrievalError",
+    "SentenceTransformerEncoder",
     "SparseBuildError",
     "SparseBuildResult",
     "SparseCandidate",
@@ -30,7 +64,11 @@ __all__ = [
     "SparseResourceError",
     "SparseResourceMeasurement",
     "SparseRetrievalError",
+    "build_dense_index",
     "build_sparse_index",
+    "cache_dense_model",
+    "dense_artifact_id",
+    "load_dense_index",
     "load_sparse_index",
     "sparse_artifact_id",
     "tokenize",

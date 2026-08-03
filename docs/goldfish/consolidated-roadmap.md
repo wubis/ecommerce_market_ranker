@@ -14,9 +14,9 @@ tested, documented, reproducible, and independently reviewable.
 
 | Scope | Target |
 |---|---:|
-| Current implemented sequence | Through Goldfish 007 |
+| Current implemented sequence | Through Goldfish 008 |
 | Core portfolio-ready project | Goldfish 016 |
-| Remaining core Goldfishes | Approximately 9 |
+| Remaining core Goldfishes | Approximately 8 |
 | Optional neural and diversity extensions | Goldfish 017–018 |
 
 Goldfish 004A is an additional completed extension even though it does not advance the primary
@@ -39,6 +39,8 @@ reload parity, top-K retrieval, explicit-pair scoring, resource measurement, and
 protocol-safe ranking/retrieval metric primitives needed to evaluate the baseline.
 
 ### Goldfish 008 — Dense Retrieval and FAISS
+
+**Status: Implemented.**
 
 Implement pinned MiniLM product embeddings, memory-bounded batch generation, normalized vector
 storage, ordered ID alignment, FAISS CPU build/load/search, explicit-pair scoring, latency and

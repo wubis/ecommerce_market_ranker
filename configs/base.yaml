@@ -35,6 +35,16 @@ retrieval:
     default_top_k: 150
     max_top_k: 1000
     sqlite_batch_rows: 10000
+  dense:
+    model_id: sentence-transformers/all-MiniLM-L6-v2
+    model_revision: c9745ed1d9f207416be6d2e6f8de32d1f16199bf
+    component_version: minilm-l6-v2-flatip-v1
+    embedding_dimension: 384
+    embedding_batch_size: 16
+    default_top_k: 150
+    max_top_k: 1000
+    latency_sample_queries: 20
+    model_cache_dir: models/huggingface
 logging:
   level: INFO
   format: json

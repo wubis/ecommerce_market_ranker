@@ -14,6 +14,11 @@ from market_rank.data.download import DownloadPolicy, download_validate_esci
 from market_rank.data.esci_raw import RawDataError, RawDataValidationError, load_release_manifest
 from market_rank.data.foundation import DataFoundationError, build_esci_foundation
 from market_rank.data.profiles import ProfileBuildError, build_esci_profiles
+from market_rank.retrieval.dense import (
+    DenseRetrievalError,
+    build_dense_index,
+    cache_dense_model,
+)
 from market_rank.retrieval.sparse import SparseRetrievalError, build_sparse_index
 
 DEFAULT_ESCI_MANIFEST = Path("configs/data/esci-release-7916cdf6ab75.json")
@@ -137,6 +142,27 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="explicit lineage revision when Git discovery is unavailable",
     )
+    cache_dense_parser = retrieval_commands.add_parser(
+        "cache-minilm",
+        help="explicitly cache the pinned MiniLM snapshot before an offline dense build",
+    )
+    cache_dense_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    cache_dense_parser.add_argument(
+        "--allow-network",
+        action="store_true",
+        help="explicitly permit the pinned Hugging Face snapshot download",
+    )
+    dense_parser = retrieval_commands.add_parser(
+        "build-dense",
+        help="build/resume normalized MiniLM vectors and an exact FAISS CPU index",
+    )
+    dense_parser.add_argument("--manifest", type=Path, default=DEFAULT_ESCI_MANIFEST)
+    dense_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    dense_parser.add_argument(
+        "--code-revision",
+        default=None,
+        help="explicit lineage revision when Git discovery is unavailable",
+    )
     return parser
 
 
@@ -252,6 +278,41 @@ def _run_build_bm25(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _run_cache_minilm(arguments: argparse.Namespace) -> int:
+    config = load_config([arguments.config])
+    path = cache_dense_model(config, allow_network=bool(arguments.allow_network))
+    dense = config.config.retrieval.dense
+    print(f"cached model: {dense.model_id}@{dense.model_revision}")
+    print(f"snapshot: {path}")
+    return 0
+
+
+def _run_build_dense(arguments: argparse.Namespace) -> int:
+    config = load_config([arguments.config])
+    release = load_release_manifest(arguments.manifest)
+    result = build_dense_index(
+        release,
+        config,
+        code_revision=_resolve_code_revision(arguments, arguments.config),
+    )
+    metadata = result.metadata
+    print(
+        f"dense index: {metadata.document_count} documents x "
+        f"{metadata.embedding_dimension} float32 dimensions"
+    )
+    print(
+        f"resource: {metadata.resource.artifact_payload_bytes} payload bytes, "
+        f"peak RSS {metadata.resource.peak_rss_bytes}/{metadata.resource.rss_limit_bytes} bytes"
+    )
+    print(
+        f"warm dense latency: p50 {metadata.latency.p50_ms:.3f} ms, "
+        f"p95 {metadata.latency.p95_ms:.3f} ms over {metadata.latency.sample_queries} queries"
+    )
+    status = "reused" if result.reused else "published"
+    print(f"{status} dense index: {result.artifact.manifest.artifact_id}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run one explicit CLI command and return a bounded process exit code."""
     parser = build_parser()
@@ -265,6 +326,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_build_esci_foundation(arguments)
         if arguments.command == "retrieval" and arguments.retrieval_command == "build-bm25":
             return _run_build_bm25(arguments)
+        if arguments.command == "retrieval" and arguments.retrieval_command == "cache-minilm":
+            return _run_cache_minilm(arguments)
+        if arguments.command == "retrieval" and arguments.retrieval_command == "build-dense":
+            return _run_build_dense(arguments)
     except RawDataValidationError as exc:
         print(
             f"error: raw ESCI validation failed ({_failed_check_count(exc)} checks failed)",
@@ -275,6 +340,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ArtifactError,
         ConfigError,
         DataFoundationError,
+        DenseRetrievalError,
         ProfileBuildError,
         RawDataError,
         SparseRetrievalError,

@@ -106,10 +106,35 @@ class SparseRetrievalConfig(_StrictModel):
         return self
 
 
+class DenseRetrievalConfig(_StrictModel):
+    """Pinned, offline-first MiniLM and exact FAISS controls."""
+
+    model_id: Literal["sentence-transformers/all-MiniLM-L6-v2"] = (
+        "sentence-transformers/all-MiniLM-L6-v2"
+    )
+    model_revision: Literal["c9745ed1d9f207416be6d2e6f8de32d1f16199bf"] = (
+        "c9745ed1d9f207416be6d2e6f8de32d1f16199bf"
+    )
+    component_version: Literal["minilm-l6-v2-flatip-v1"] = "minilm-l6-v2-flatip-v1"
+    embedding_dimension: Literal[384] = 384
+    embedding_batch_size: int = Field(default=16, strict=True, ge=1, le=64)
+    default_top_k: int = Field(default=150, strict=True, ge=1, le=1000)
+    max_top_k: int = Field(default=1000, strict=True, ge=1, le=5000)
+    latency_sample_queries: int = Field(default=20, strict=True, ge=1, le=100)
+    model_cache_dir: Path = Path("models/huggingface")
+
+    @model_validator(mode="after")
+    def validate_top_k(self) -> Self:
+        if self.default_top_k > self.max_top_k:
+            raise ValueError("default_top_k must not exceed max_top_k")
+        return self
+
+
 class RetrievalConfig(_StrictModel):
     """Versioned retrieval subsystem configuration."""
 
     sparse: SparseRetrievalConfig = SparseRetrievalConfig()
+    dense: DenseRetrievalConfig = DenseRetrievalConfig()
 
 
 class LoggingConfig(_StrictModel):
@@ -293,6 +318,7 @@ __all__ = [
     "ConfigOverrideError",
     "ConfigValidationError",
     "DatasetConfig",
+    "DenseRetrievalConfig",
     "LoggingConfig",
     "PathsConfig",
     "ProjectConfig",
