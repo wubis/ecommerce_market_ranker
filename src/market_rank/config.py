@@ -8,10 +8,10 @@ from copy import deepcopy
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from yaml.constructor import ConstructorError
 from yaml.nodes import MappingNode
 from yaml.resolver import BaseResolver
@@ -64,6 +64,23 @@ class RuntimeConfig(_StrictModel):
     offline: bool = Field(default=True, strict=True)
 
 
+class DatasetConfig(_StrictModel):
+    """Deterministic Task-1 cohort, split, and nested-profile controls."""
+
+    query_normalization_version: Literal["nfkc-casefold-ws-v1"] = "nfkc-casefold-ws-v1"
+    split_version: Literal["normalized-query-sha256-v1"] = "normalized-query-sha256-v1"
+    profile_version: Literal["nested-query-sha256-v1"] = "nested-query-sha256-v1"
+    train_basis_points: int = Field(default=8500, strict=True, ge=1, le=9999)
+    development_query_groups: int = Field(default=5000, strict=True, ge=1)
+    portfolio_query_groups: int = Field(default=20000, strict=True, ge=1)
+
+    @model_validator(mode="after")
+    def validate_nested_targets(self) -> Self:
+        if self.development_query_groups > self.portfolio_query_groups:
+            raise ValueError("development_query_groups must not exceed portfolio_query_groups")
+        return self
+
+
 class LoggingConfig(_StrictModel):
     """Safe local logging defaults."""
 
@@ -79,6 +96,7 @@ class AppConfig(_StrictModel):
     project: ProjectConfig = ProjectConfig()
     paths: PathsConfig = PathsConfig()
     runtime: RuntimeConfig = RuntimeConfig()
+    dataset: DatasetConfig = DatasetConfig()
     logging: LoggingConfig = LoggingConfig()
 
 
@@ -242,6 +260,7 @@ __all__ = [
     "ConfigFileError",
     "ConfigOverrideError",
     "ConfigValidationError",
+    "DatasetConfig",
     "LoggingConfig",
     "PathsConfig",
     "ProjectConfig",

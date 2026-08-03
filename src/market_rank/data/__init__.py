@@ -23,15 +23,27 @@ from market_rank.data.esci_raw import (
     publish_raw_validation,
     validate_raw_dataset,
 )
+from market_rank.data.profiles import (
+    EsciProfileManifest,
+    ProfileBuildError,
+    ProfileBuildResult,
+    build_esci_profiles,
+    load_profile_manifest,
+    normalize_query_group,
+    profile_artifact_id,
+)
 
 __all__ = [
     "AcquisitionResult",
     "DownloadPolicy",
     "DownloadWorkflowResult",
-    "EsciReleaseManifest",
     "EsciDownloadError",
+    "EsciProfileManifest",
+    "EsciReleaseManifest",
     "FileAcquisition",
     "HttpDownloadTransport",
+    "ProfileBuildError",
+    "ProfileBuildResult",
     "RawDataError",
     "RawDataValidationError",
     "RawFileSource",
@@ -39,9 +51,13 @@ __all__ = [
     "RawValidationReport",
     "ResolvedReleaseManifest",
     "acquire_esci_files",
+    "build_esci_profiles",
     "download_validate_esci",
     "ensure_raw_validation_artifact",
+    "load_profile_manifest",
     "load_release_manifest",
+    "normalize_query_group",
+    "profile_artifact_id",
     "publish_raw_validation",
     "validate_raw_dataset",
 ]

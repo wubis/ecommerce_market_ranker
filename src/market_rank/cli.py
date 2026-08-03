@@ -12,6 +12,7 @@ from market_rank.artifacts import ArtifactError
 from market_rank.config import ConfigError, load_config
 from market_rank.data.download import DownloadPolicy, download_validate_esci
 from market_rank.data.esci_raw import RawDataError, RawDataValidationError, load_release_manifest
+from market_rank.data.profiles import ProfileBuildError, build_esci_profiles
 
 DEFAULT_ESCI_MANIFEST = Path("configs/data/esci-release-7916cdf6ab75.json")
 DEFAULT_CONFIG = Path("configs/base.yaml")
@@ -82,6 +83,24 @@ def build_parser() -> argparse.ArgumentParser:
     download_parser.add_argument("--connect-timeout", type=float, default=15.0)
     download_parser.add_argument("--read-timeout", type=float, default=60.0)
     download_parser.add_argument("--attempts", type=int, default=3)
+
+    profiles_parser = data_commands.add_parser(
+        "build-esci-profiles",
+        help="build leakage-safe Task-1 US splits and nested query profiles",
+    )
+    profiles_parser.add_argument("--manifest", type=Path, default=DEFAULT_ESCI_MANIFEST)
+    profiles_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    profiles_parser.add_argument(
+        "--raw-dir",
+        type=Path,
+        default=None,
+        help="override configured data/raw/esci source",
+    )
+    profiles_parser.add_argument(
+        "--code-revision",
+        default=None,
+        help="explicit lineage revision when Git discovery is unavailable",
+    )
     return parser
 
 
@@ -116,6 +135,40 @@ def _run_download_esci(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_code_revision(arguments: argparse.Namespace, config_path: Path) -> str:
+    if arguments.code_revision is not None:
+        return str(arguments.code_revision)
+    repository_root = _find_repository_root(config_path.resolve(strict=False).parent)
+    return detect_code_revision(repository_root)
+
+
+def _run_build_esci_profiles(arguments: argparse.Namespace) -> int:
+    config = load_config([arguments.config])
+    release = load_release_manifest(arguments.manifest)
+    result = build_esci_profiles(
+        release,
+        config,
+        code_revision=_resolve_code_revision(arguments, arguments.config),
+        raw_root=arguments.raw_dir,
+    )
+    development, portfolio = result.manifest.profiles
+    print(
+        f"Task-1 US: {result.manifest.task1_us_query_ids} query IDs, "
+        f"{result.manifest.task1_us_judgments} judgments"
+    )
+    print(
+        f"quarantined: {result.manifest.quarantined_train_query_ids} train query IDs "
+        "colliding with official test"
+    )
+    print(
+        f"development: {development.selected_normalized_query_groups} normalized-query groups; "
+        f"portfolio: {portfolio.selected_normalized_query_groups} normalized-query groups"
+    )
+    status = "reused" if result.reused else "published"
+    print(f"{status} profile artifact: {result.artifact.manifest.artifact_id}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run one explicit CLI command and return a bounded process exit code."""
     parser = build_parser()
@@ -123,13 +176,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if arguments.command == "data" and arguments.data_command == "download-esci":
             return _run_download_esci(arguments)
+        if arguments.command == "data" and arguments.data_command == "build-esci-profiles":
+            return _run_build_esci_profiles(arguments)
     except RawDataValidationError as exc:
         print(
             f"error: raw ESCI validation failed ({_failed_check_count(exc)} checks failed)",
             file=sys.stderr,
         )
         return 1
-    except (ArtifactError, ConfigError, RawDataError, ValueError) as exc:
+    except (ArtifactError, ConfigError, ProfileBuildError, RawDataError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

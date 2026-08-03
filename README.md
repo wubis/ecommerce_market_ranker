@@ -4,10 +4,10 @@ MarketRank is a planned CPU-first, multi-stage e-commerce search and ranking sys
 around the public Amazon ESCI Task 1 relevance judgments. The authoritative architecture is
 defined in [ELEPHANT.md](ELEPHANT.md).
 
-This repository has completed **Goldfish 004A**: environment/tooling, strict layered
-configuration, atomic artifacts, pinned ESCI validation, and an explicit idempotent download
-command. It intentionally contains no normalization, US/Task-1 filtering, splitting,
-retrieval, feature, training, serving, or demo logic.
+This repository has completed **Goldfish 005**: environment/tooling, strict layered
+configuration, atomic artifacts, pinned ESCI validation, explicit idempotent download, and
+deterministic Task-1 US cohort/split/profile construction. It intentionally contains no
+canonical normalized tables, catalog, retrieval, feature, training, serving, or demo logic.
 
 ## Reference environment
 
@@ -200,8 +200,40 @@ inspection. After confirming no process is using a hidden `.partial-*.tmp` file 
 abrupt termination, that partial may be removed and the command rerun. Permanent HTTP errors
 are not retried; transient connection and selected HTTP failures retry at most three times.
 
-After successful acquisition, core validation and downstream work can run offline. Filtering
-to the required US Task-1 population remains Goldfish 005.
+After successful acquisition, core validation and downstream work can run offline.
+
+## Build Task-1 US splits and nested profiles
+
+Once the current configuration has a successful raw-validation artifact, run:
+
+```bash
+uv run market-rank data build-esci-profiles
+```
+
+The fully explicit form is:
+
+```bash
+market-rank data build-esci-profiles \
+  --manifest configs/data/esci-release-7916cdf6ab75.json \
+  --config configs/base.yaml
+```
+
+If configuration semantics changed since the last acquisition, rerun `download-esci` first.
+Matching raw files are rehashed without network access and a compatible validation artifact is
+published for the new configuration hash.
+
+Goldfish 005 applies only `product_locale == "us"` and `small_version == 1`. It groups queries
+using versioned Unicode NFKC, case folding, and whitespace collapse. Official test queries are
+frozen as project test. Any official-train query whose normalized text also occurs in official
+test is quarantined; remaining train groups receive deterministic approximately 85%/15%
+project train/validation assignments.
+
+Development and portfolio use stable label-blind priorities over complete normalized-query
+groups. Defaults target 5,000 and 20,000 groups, with development guaranteed to be a subset of
+portfolio. The promoted artifact contains a compact assignment Parquet and strict audit
+manifest under `artifacts/dataset-profiles/...`. It never copies query text to terminal output,
+never samples judgment rows, and never uses ESCI labels to choose splits or profiles. A rerun
+verifies and reuses a compatible immutable artifact.
 
 ## Download and offline boundary
 
@@ -249,6 +281,7 @@ ecommerce_market_ranker/
 ├── docs/goldfish/003-artifact-protocol.md
 ├── docs/goldfish/004-esci-raw-validation.md
 ├── docs/goldfish/004a-esci-download-command.md
+├── docs/goldfish/005-task1-us-splits-profiles.md
 ├── src/market_rank/
 │   ├── __init__.py
 │   ├── artifacts.py
@@ -257,13 +290,15 @@ ecommerce_market_ranker/
 │   └── data/
 │       ├── __init__.py
 │       ├── download.py
-│       └── esci_raw.py
+│       ├── esci_raw.py
+│       └── profiles.py
 └── tests/
     ├── smoke/test_import.py
     └── unit/
         ├── test_artifacts.py
         ├── test_config.py
         ├── test_esci_download.py
+        ├── test_esci_profiles.py
         └── test_esci_raw.py
 ```
 

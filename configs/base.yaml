@@ -12,8 +12,14 @@ runtime:
   max_threads: 4
   rss_limit_mb: 5632
   offline: true
+dataset:
+  query_normalization_version: nfkc-casefold-ws-v1
+  split_version: normalized-query-sha256-v1
+  profile_version: nested-query-sha256-v1
+  train_basis_points: 8500
+  development_query_groups: 5000
+  portfolio_query_groups: 20000
 logging:
   level: INFO
   format: json
   log_raw_queries: false
-

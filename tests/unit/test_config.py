@@ -88,6 +88,17 @@ def test_semantic_change_changes_hash() -> None:
     assert default.sha256 != changed.sha256
 
 
+def test_dataset_profile_targets_must_be_nested() -> None:
+    with pytest.raises(ConfigValidationError, match="development_query_groups"):
+        load_config(
+            [BASE_CONFIG],
+            overrides={
+                "dataset.development_query_groups": 101,
+                "dataset.portfolio_query_groups": 100,
+            },
+        )
+
+
 @pytest.mark.parametrize(
     "content",
     [
