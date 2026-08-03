@@ -4,9 +4,10 @@ MarketRank is a planned CPU-first, multi-stage e-commerce search and ranking sys
 around the public Amazon ESCI Task 1 relevance judgments. The authoritative architecture is
 defined in [ELEPHANT.md](ELEPHANT.md).
 
-This repository has completed **Goldfish 003**: environment/tooling, strict layered
-configuration, and the manifest-backed atomic artifact lifecycle. It intentionally contains
-no ingestion, retrieval, feature, training, serving, or demo logic.
+This repository has completed **Goldfish 004A**: environment/tooling, strict layered
+configuration, atomic artifacts, pinned ESCI validation, and an explicit idempotent download
+command. It intentionally contains no normalization, US/Task-1 filtering, splitting,
+retrieval, feature, training, serving, or demo logic.
 
 ## Reference environment
 
@@ -156,6 +157,52 @@ artifact and fails closed on path escape, symbolic links, missing success state,
 files, byte-size or checksum changes, strict schema violations, or parent-manifest hash
 mismatches. “Latest” aliases are not dependencies.
 
+## Download and validate ESCI raw data
+
+[`configs/data/esci-release-7916cdf6ab75.json`](configs/data/esci-release-7916cdf6ab75.json)
+pins the official Amazon Science repository revision, Apache-2.0 license, paper, exact source
+filenames, byte sizes, and SHA-256 checksums. The three source files total about 1.16 GB. They
+are deliberately not downloaded by setup, tests, imports, validation-only calls, or
+application startup.
+
+From the repository root, explicitly run:
+
+```bash
+uv run market-rank data download-esci
+```
+
+The equivalent fully explicit console command is:
+
+```bash
+market-rank data download-esci \
+  --manifest configs/data/esci-release-7916cdf6ab75.json \
+  --config configs/base.yaml
+```
+
+The workflow distinguishes four states:
+
+1. **Pinned release metadata** is the tracked JSON contract.
+2. **Downloaded raw files** are verified bytes in `data/raw/esci/`.
+3. **Validated raw dataset** is the complete structural validation report.
+4. **Promoted validation artifact** is immutable evidence under
+   `artifacts/raw-validation/...`.
+
+Downloads use bounded 1 MiB chunks, separate connect/read timeouts, bounded transient retries,
+same-directory hidden partials, incremental size/SHA-256 verification, and atomic promotion.
+Validation then lazily checks exact columns, semantic types, required values, domains, primary
+keys, query consistency, and cross-file joins. Invalid reports retain full programmatic detail
+and cannot be promoted.
+
+Reruns are safe and idempotent: matching files are rehashed and reused without network access,
+and a compatible immutable validation artifact is reused. A mismatched existing final file is
+never overwritten; the command exits with a concise error and leaves it untouched for manual
+inspection. After confirming no process is using a hidden `.partial-*.tmp` file left by an
+abrupt termination, that partial may be removed and the command rerun. Permanent HTTP errors
+are not retried; transient connection and selected HTTP failures retry at most three times.
+
+After successful acquisition, core validation and downstream work can run offline. Filtering
+to the required US Task-1 population remains Goldfish 005.
+
 ## Download and offline boundary
 
 Internet access is allowed only during explicit setup operations:
@@ -195,18 +242,29 @@ ecommerce_market_ranker/
 ├── pyproject.toml
 ├── uv.lock
 ├── .pre-commit-config.yaml
-├── configs/base.yaml
+├── configs/
+│   ├── base.yaml
+│   └── data/esci-release-7916cdf6ab75.json
 ├── docs/goldfish/002-strict-configuration.md
 ├── docs/goldfish/003-artifact-protocol.md
+├── docs/goldfish/004-esci-raw-validation.md
+├── docs/goldfish/004a-esci-download-command.md
 ├── src/market_rank/
 │   ├── __init__.py
 │   ├── artifacts.py
-│   └── config.py
+│   ├── cli.py
+│   ├── config.py
+│   └── data/
+│       ├── __init__.py
+│       ├── download.py
+│       └── esci_raw.py
 └── tests/
     ├── smoke/test_import.py
     └── unit/
         ├── test_artifacts.py
-        └── test_config.py
+        ├── test_config.py
+        ├── test_esci_download.py
+        └── test_esci_raw.py
 ```
 
 Later directories and modules will be introduced only by approved Goldfish tasks.

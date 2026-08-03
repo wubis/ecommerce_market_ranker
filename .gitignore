@@ -26,13 +26,12 @@ dist/
 mlruns/
 
 # Downloaded data and generated ML artifacts
-data/
-artifacts/
-experiments/
-reports/generated/
+/data/
+/artifacts/
+/experiments/
+/reports/generated/
 notebooks/.ipynb_checkpoints/
 
 # Local pretrained-model caches, if configured inside the repository
 huggingface-cache/
 torch-cache/
-

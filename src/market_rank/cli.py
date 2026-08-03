@@ -1,0 +1,141 @@
+"""Thin command-line interface for explicit MarketRank lifecycle operations."""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+from collections.abc import Sequence
+from pathlib import Path
+
+from market_rank.artifacts import ArtifactError
+from market_rank.config import ConfigError, load_config
+from market_rank.data.download import DownloadPolicy, download_validate_esci
+from market_rank.data.esci_raw import RawDataError, RawDataValidationError, load_release_manifest
+
+DEFAULT_ESCI_MANIFEST = Path("configs/data/esci-release-7916cdf6ab75.json")
+DEFAULT_CONFIG = Path("configs/base.yaml")
+
+
+class CodeRevisionError(RawDataError):
+    """Raised when the CLI cannot record a repository revision."""
+
+
+def _find_repository_root(start: Path) -> Path:
+    candidate = start.resolve(strict=False)
+    for directory in (candidate, *candidate.parents):
+        if (directory / ".git").exists():
+            return directory
+    raise CodeRevisionError("cannot locate a Git repository; pass --code-revision explicitly")
+
+
+def detect_code_revision(repository_root: Path) -> str:
+    """Return HEAD with an explicit dirty suffix for reproducible lineage."""
+    try:
+        head = subprocess.run(
+            ["git", "-C", str(repository_root), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout.strip()
+        status = subprocess.run(
+            ["git", "-C", str(repository_root), "status", "--porcelain"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise CodeRevisionError(
+            f"cannot determine code revision; pass --code-revision explicitly: {exc}"
+        ) from exc
+    if len(head) != 40 or any(character not in "0123456789abcdef" for character in head):
+        raise CodeRevisionError("Git returned an invalid HEAD revision")
+    return f"{head}-dirty" if status else head
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the stable MarketRank CLI grammar without performing I/O."""
+    parser = argparse.ArgumentParser(prog="market-rank")
+    command_parsers = parser.add_subparsers(dest="command", required=True)
+
+    data_parser = command_parsers.add_parser("data", help="raw dataset lifecycle commands")
+    data_commands = data_parser.add_subparsers(dest="data_command", required=True)
+    download_parser = data_commands.add_parser(
+        "download-esci",
+        help="explicitly download, verify, validate, and publish pinned ESCI data",
+    )
+    download_parser.add_argument("--manifest", type=Path, default=DEFAULT_ESCI_MANIFEST)
+    download_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    download_parser.add_argument(
+        "--raw-dir",
+        type=Path,
+        default=None,
+        help="override configured data/raw/esci destination",
+    )
+    download_parser.add_argument(
+        "--code-revision",
+        default=None,
+        help="explicit lineage revision when Git discovery is unavailable",
+    )
+    download_parser.add_argument("--connect-timeout", type=float, default=15.0)
+    download_parser.add_argument("--read-timeout", type=float, default=60.0)
+    download_parser.add_argument("--attempts", type=int, default=3)
+    return parser
+
+
+def _failed_check_count(error: RawDataValidationError) -> int:
+    report = error.report
+    return sum(not check.passed for file in report.files for check in file.checks) + sum(
+        not check.passed for check in report.dataset_checks
+    )
+
+
+def _run_download_esci(arguments: argparse.Namespace) -> int:
+    config = load_config([arguments.config])
+    release = load_release_manifest(arguments.manifest)
+    code_revision = arguments.code_revision
+    if code_revision is None:
+        repository_root = _find_repository_root(config.source_paths[0].parent)
+        code_revision = detect_code_revision(repository_root)
+
+    policy = DownloadPolicy(
+        connect_timeout_s=arguments.connect_timeout,
+        read_timeout_s=arguments.read_timeout,
+        max_attempts=arguments.attempts,
+    )
+    download_validate_esci(
+        release,
+        config,
+        code_revision=code_revision,
+        raw_root=arguments.raw_dir,
+        policy=policy,
+        progress=print,
+    )
+    return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run one explicit CLI command and return a bounded process exit code."""
+    parser = build_parser()
+    arguments = parser.parse_args(argv)
+    try:
+        if arguments.command == "data" and arguments.data_command == "download-esci":
+            return _run_download_esci(arguments)
+    except RawDataValidationError as exc:
+        print(
+            f"error: raw ESCI validation failed ({_failed_check_count(exc)} checks failed)",
+            file=sys.stderr,
+        )
+        return 1
+    except (ArtifactError, ConfigError, RawDataError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    parser.error("unsupported command")
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
