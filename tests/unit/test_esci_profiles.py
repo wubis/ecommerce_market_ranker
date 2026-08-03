@@ -110,6 +110,7 @@ def _write_raw(raw_root: Path, examples: pl.DataFrame) -> None:
     examples.write_parquet(raw_root / "shopping_queries_dataset_examples.parquet")
     products = (
         examples.select("product_id", "product_locale")
+        .unique()
         .with_columns(
             pl.concat_str(pl.lit("Product "), pl.col("product_id")).alias("product_title"),
             pl.lit(None, dtype=pl.String).alias("product_description"),

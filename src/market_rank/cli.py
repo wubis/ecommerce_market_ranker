@@ -12,6 +12,7 @@ from market_rank.artifacts import ArtifactError
 from market_rank.config import ConfigError, load_config
 from market_rank.data.download import DownloadPolicy, download_validate_esci
 from market_rank.data.esci_raw import RawDataError, RawDataValidationError, load_release_manifest
+from market_rank.data.foundation import DataFoundationError, build_esci_foundation
 from market_rank.data.profiles import ProfileBuildError, build_esci_profiles
 
 DEFAULT_ESCI_MANIFEST = Path("configs/data/esci-release-7916cdf6ab75.json")
@@ -101,6 +102,24 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="explicit lineage revision when Git discovery is unavailable",
     )
+
+    foundation_parser = data_commands.add_parser(
+        "build-esci-foundation",
+        help="build canonical tables, fixed catalog, judged pools, and product documents",
+    )
+    foundation_parser.add_argument("--manifest", type=Path, default=DEFAULT_ESCI_MANIFEST)
+    foundation_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    foundation_parser.add_argument(
+        "--raw-dir",
+        type=Path,
+        default=None,
+        help="override configured data/raw/esci source",
+    )
+    foundation_parser.add_argument(
+        "--code-revision",
+        default=None,
+        help="explicit lineage revision when Git discovery is unavailable",
+    )
     return parser
 
 
@@ -169,6 +188,31 @@ def _run_build_esci_profiles(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _run_build_esci_foundation(arguments: argparse.Namespace) -> int:
+    config = load_config([arguments.config])
+    release = load_release_manifest(arguments.manifest)
+    result = build_esci_foundation(
+        release,
+        config,
+        code_revision=_resolve_code_revision(arguments, arguments.config),
+        raw_root=arguments.raw_dir,
+    )
+    development, portfolio = result.manifest.pools
+    resource = result.manifest.resource_estimate
+    print(f"canonical portfolio: {portfolio.query_ids} queries, {portfolio.judgments} judgments")
+    print(
+        f"fixed catalog: {result.manifest.catalog_products} products "
+        f"({result.manifest.catalog_excluded_no_text} excluded without text)"
+    )
+    print(
+        f"development pool: {development.query_ids} queries; resource gate: "
+        f"{resource.projected_runtime_bytes}/{resource.rss_limit_bytes} bytes, proceed"
+    )
+    status = "reused" if result.reused else "published"
+    print(f"{status} data foundation: {result.artifact.manifest.artifact_id}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run one explicit CLI command and return a bounded process exit code."""
     parser = build_parser()
@@ -178,13 +222,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_download_esci(arguments)
         if arguments.command == "data" and arguments.data_command == "build-esci-profiles":
             return _run_build_esci_profiles(arguments)
+        if arguments.command == "data" and arguments.data_command == "build-esci-foundation":
+            return _run_build_esci_foundation(arguments)
     except RawDataValidationError as exc:
         print(
             f"error: raw ESCI validation failed ({_failed_check_count(exc)} checks failed)",
             file=sys.stderr,
         )
         return 1
-    except (ArtifactError, ConfigError, ProfileBuildError, RawDataError, ValueError) as exc:
+    except (
+        ArtifactError,
+        ConfigError,
+        DataFoundationError,
+        ProfileBuildError,
+        RawDataError,
+        ValueError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

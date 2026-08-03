@@ -19,6 +19,13 @@ dataset:
   train_basis_points: 8500
   development_query_groups: 5000
   portfolio_query_groups: 20000
+  product_document_version: product-document-v1
+  title_max_chars: 512
+  brand_max_chars: 128
+  color_max_chars: 128
+  bullets_max_chars: 2048
+  description_max_chars: 4096
+  m2_runtime_reserve_mb: 512
 logging:
   level: INFO
   format: json

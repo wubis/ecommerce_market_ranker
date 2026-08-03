@@ -73,6 +73,13 @@ class DatasetConfig(_StrictModel):
     train_basis_points: int = Field(default=8500, strict=True, ge=1, le=9999)
     development_query_groups: int = Field(default=5000, strict=True, ge=1)
     portfolio_query_groups: int = Field(default=20000, strict=True, ge=1)
+    product_document_version: Literal["product-document-v1"] = "product-document-v1"
+    title_max_chars: int = Field(default=512, strict=True, ge=32, le=4096)
+    brand_max_chars: int = Field(default=128, strict=True, ge=16, le=1024)
+    color_max_chars: int = Field(default=128, strict=True, ge=16, le=1024)
+    bullets_max_chars: int = Field(default=2048, strict=True, ge=128, le=16384)
+    description_max_chars: int = Field(default=4096, strict=True, ge=256, le=32768)
+    m2_runtime_reserve_mb: int = Field(default=512, strict=True, ge=64, le=4096)
 
     @model_validator(mode="after")
     def validate_nested_targets(self) -> Self:

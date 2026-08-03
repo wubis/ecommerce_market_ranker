@@ -4,10 +4,10 @@ MarketRank is a planned CPU-first, multi-stage e-commerce search and ranking sys
 around the public Amazon ESCI Task 1 relevance judgments. The authoritative architecture is
 defined in [ELEPHANT.md](ELEPHANT.md).
 
-This repository has completed **Goldfish 005**: environment/tooling, strict layered
-configuration, atomic artifacts, pinned ESCI validation, explicit idempotent download, and
-deterministic Task-1 US cohort/split/profile construction. It intentionally contains no
-canonical normalized tables, catalog, retrieval, feature, training, serving, or demo logic.
+This repository has completed **Goldfish 006**: environment/tooling, strict layered
+configuration, atomic artifacts, pinned ESCI validation/download, deterministic Task-1 US
+profiles, and the canonical M2 data foundation. It intentionally contains no retrieval index,
+ranking metrics, embeddings, features, training, serving, or demo logic.
 
 ## Reference environment
 
@@ -235,6 +235,38 @@ manifest under `artifacts/dataset-profiles/...`. It never copies query text to t
 never samples judgment rows, and never uses ESCI labels to choose splits or profiles. A rerun
 verifies and reuses a compatible immutable artifact.
 
+## Build the canonical M2 data foundation
+
+After Goldfish 005 succeeds, run:
+
+```bash
+uv run market-rank data build-esci-foundation
+```
+
+The stage publishes canonical queries, sources, judgments, catalog products, versioned product
+documents, fixed retrieval membership, no-text exclusions, and complete development/portfolio
+judged pools. It keeps official label IDs and gains separate, constructs catalog membership from
+all Task-1 US participation without reading labels or profile selection, and records exact table
+keys/counts/checksums.
+
+Product documents use the versioned marker template described in
+[`docs/goldfish/006-data-foundation.md`](docs/goldfish/006-data-foundation.md), while official
+display fields remain unchanged. A preliminary resource gate estimates sparse index, 384-wide
+float32 vectors, ID/display state, and runtime reserve against the 5.5 GB process-RSS limit. An
+over-limit estimate prevents promotion; later retrieval Goldfishes replace estimates with
+measured component and combined RSS.
+
+The complete local data sequence is:
+
+```bash
+uv run market-rank data download-esci
+uv run market-rank data build-esci-profiles
+uv run market-rank data build-esci-foundation
+```
+
+All three commands are idempotent. After the explicit initial download they operate offline,
+verify their exact immutable parents, and reuse compatible outputs.
+
 ## Download and offline boundary
 
 Internet access is allowed only during explicit setup operations:
@@ -282,6 +314,7 @@ ecommerce_market_ranker/
 ├── docs/goldfish/004-esci-raw-validation.md
 ├── docs/goldfish/004a-esci-download-command.md
 ├── docs/goldfish/005-task1-us-splits-profiles.md
+├── docs/goldfish/006-data-foundation.md
 ├── src/market_rank/
 │   ├── __init__.py
 │   ├── artifacts.py
@@ -291,8 +324,10 @@ ecommerce_market_ranker/
 │       ├── __init__.py
 │       ├── download.py
 │       ├── esci_raw.py
+│       ├── foundation.py
 │       └── profiles.py
 └── tests/
+    ├── integration/test_esci_foundation.py
     ├── smoke/test_import.py
     └── unit/
         ├── test_artifacts.py
