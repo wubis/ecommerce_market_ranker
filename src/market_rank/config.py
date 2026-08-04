@@ -272,7 +272,7 @@ class RankingEvaluationConfig(_StrictModel):
     selection_tie_tolerance: float = Field(default=1e-12, strict=True, ge=0.0, le=0.01)
     failure_analysis_queries: int = Field(default=20, strict=True, ge=1, le=1000)
     max_closed_rows: int = Field(default=200000, strict=True, ge=1, le=500000)
-    max_candidate_rows: int = Field(default=200000, strict=True, ge=1, le=500000)
+    max_candidate_rows: int = Field(default=1500000, strict=True, ge=1, le=4000000)
 
     @model_validator(mode="after")
     def validate_ranking_evaluation(self) -> Self:

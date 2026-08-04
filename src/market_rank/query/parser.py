@@ -11,7 +11,7 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from market_rank.config import QueryUnderstandingConfig
-from market_rank.retrieval.sparse import tokenize
+from market_rank.retrieval.sparse import tokenize as tokenize
 
 Sha256Digest = Annotated[
     str,
@@ -317,12 +317,8 @@ class QueryParser:
         warnings = ("conservative_spelling_alias_applied",) if corrected != initial_tokens else ()
         corrected_text = " ".join(corrected)
 
-        brand_value = _longest_boundary_match(
-            corrected, self._brands, self._brand_maximum_width
-        )
-        color_value = _longest_boundary_match(
-            corrected, self._colors, self._color_maximum_width
-        )
+        brand_value = _longest_boundary_match(corrected, self._brands, self._brand_maximum_width)
+        color_value = _longest_boundary_match(corrected, self._colors, self._color_maximum_width)
         color_source: Literal["catalog", "alias"] = "catalog"
         if color_value is None:
             alias = _longest_boundary_match(

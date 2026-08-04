@@ -181,7 +181,7 @@ ranking_evaluation:
   selection_tie_tolerance: 1.0e-12
   failure_analysis_queries: 20
   max_closed_rows: 200000
-  max_candidate_rows: 200000
+  max_candidate_rows: 1500000
 ```
 
 Cutoffs must be nonempty, positive, unique, and sorted. Population limits are hard failure gates;

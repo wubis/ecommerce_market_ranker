@@ -777,7 +777,11 @@ def _read_evaluation_inputs(
         raise RankingEvaluationBuildError(f"project {split} has no closed judged rows")
     limits = config.config.ranking_evaluation
     if closed.height > limits.max_closed_rows or candidates.height > limits.max_candidate_rows:
-        raise RankingEvaluationBuildError(f"exact {split} evaluation population exceeds row limits")
+        raise RankingEvaluationBuildError(
+            f"exact {split} evaluation population exceeds row limits: "
+            f"closed={closed.height}/{limits.max_closed_rows}, "
+            f"candidate={candidates.height}/{limits.max_candidate_rows}"
+        )
     for name, frame in (("closed", closed), ("candidate", candidates)):
         if frame.select(pl.struct("query_id", "product_id").n_unique()).item() != frame.height:
             raise RankingEvaluationBuildError(f"{name} evaluation keys are not unique")

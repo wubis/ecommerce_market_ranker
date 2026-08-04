@@ -634,9 +634,7 @@ def _stable_search(
             for ordinal, score in zip(ordinals[0], scores[0], strict=True)
             if int(ordinal) >= 0
         ]
-        if len(observed) != requested or any(
-            not math.isfinite(score) for _, score in observed
-        ):
+        if len(observed) != requested or any(not math.isfinite(score) for _, score in observed):
             raise DenseIndexValidationError(
                 "FAISS returned incomplete or non-finite requested scores"
             )

@@ -239,7 +239,7 @@ def test_ranking_evaluation_defaults_quarantine_test_and_bound_populations() -> 
     assert ranking.diagnostic_cutoffs == (10, 100)
     assert ranking.material_regression_tolerance == 0.005
     assert ranking.max_closed_rows == 200000
-    assert ranking.max_candidate_rows == 200000
+    assert ranking.max_candidate_rows == 1500000
 
 
 def test_serving_defaults_are_local_explicit_and_m3_bounded() -> None:

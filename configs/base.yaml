@@ -109,7 +109,7 @@ ranking_evaluation:
   selection_tie_tolerance: 1.0e-12
   failure_analysis_queries: 20
   max_closed_rows: 200000
-  max_candidate_rows: 200000
+  max_candidate_rows: 1500000
 serving:
   component_version: serving-bundle-v1
   bind_host: 127.0.0.1
