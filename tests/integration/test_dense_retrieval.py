@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import gc
+import weakref
 from argparse import Namespace
 from hashlib import sha256
 from pathlib import Path
 
 import numpy as np
+import polars as pl
 import pytest
 
 import market_rank.cli as cli_module
@@ -266,6 +269,37 @@ def test_incompatible_encoder_identity_fails_before_embedding(tmp_path: Path) ->
         _build(prepared, WrongRevisionEncoder())
 
     assert not (tmp_path / "artifacts" / ".dense-build").exists()
+
+
+def test_releases_redundant_foundation_frames_before_loading_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    prepared = _prepare_dense(tmp_path)
+    original_align = dense_module._aligned_documents
+    frame_refs: list[weakref.ReferenceType[pl.DataFrame]] = []
+
+    def observe_frames(membership: pl.DataFrame, documents: pl.DataFrame) -> pl.DataFrame:
+        frame_refs.extend((weakref.ref(membership), weakref.ref(documents)))
+        return original_align(membership, documents)
+
+    class ObservingEncoder(HashEncoder):
+        def __init__(self, config: ResolvedConfig) -> None:
+            del config
+            gc.collect()
+            assert frame_refs and all(reference() is None for reference in frame_refs)
+
+    monkeypatch.setattr(dense_module, "_aligned_documents", observe_frames)
+    monkeypatch.setattr(dense_module, "SentenceTransformerEncoder", ObservingEncoder)
+
+    result = build_dense_index(
+        prepared[0],
+        prepared[1],
+        code_revision="fixture",
+        artifact_store=prepared[2],
+    )
+
+    assert result.metadata.document_count == 17
 
 
 def test_model_cache_uses_exact_revision_and_explicit_network_flag(

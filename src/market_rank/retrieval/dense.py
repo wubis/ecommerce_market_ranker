@@ -748,11 +748,12 @@ def build_dense_index(
     artifact_path = store.root.joinpath(*artifact_id.split("/"))
     if artifact_path.exists() or artifact_path.is_symlink():
         return _reuse_dense(release, config, foundation, store)
+    aligned = _aligned_documents(membership, documents)
+    del membership, documents
     active_encoder = (
         encoder if encoder is not None else cast(DenseEncoder, SentenceTransformerEncoder(config))
     )
     _validate_encoder(active_encoder, config)
-    aligned = _aligned_documents(membership, documents)
     product_ids = tuple(str(value) for value in aligned["product_id"].to_list())
     workspace = _workspace_path(store, artifact_id)
     started = time.perf_counter()
