@@ -19,36 +19,34 @@ artifacts.
 ## System design
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph Offline["Offline build, training, and evaluation"]
+        direction TB
         ESCI["Amazon ESCI data"] --> Foundation["Validated data foundation"]
         Foundation --> BM25["BM25 index"]
         Foundation --> Dense["MiniLM embeddings + FAISS"]
-        BM25 --> RRF["Reciprocal-rank fusion"]
-        Dense --> RRF
-        RRF --> Features["44-feature LTR matrix"]
-        Foundation --> Features
-        Features --> Pointwise["Pointwise LightGBM"]
-        Features --> Lambda["LambdaMART"]
-        Pointwise --> Evaluation["Protocol-separated evaluation"]
+        BM25 --> Candidates["RRF candidates + 44-feature LTR matrix"]
+        Dense --> Candidates
+        Candidates --> Pointwise["Pointwise LightGBM"]
+        Candidates --> Lambda["LambdaMART"]
+        Pointwise --> Evaluation["Protocol-separated validation evaluation"]
         Lambda --> Evaluation
-        Evaluation --> Champion["Validation-selected champion"]
+        Evaluation --> Champion["Champion selection"]
         Champion --> Bundle["Immutable serving bundle"]
     end
 
     subgraph Online["Local online search"]
+        direction TB
         Query["User query"] --> Parser["Deterministic query parser"]
-        Parser --> Retrieval["BM25 + dense retrieval"]
-        Retrieval --> Fusion["RRF candidate fusion"]
-        Fusion --> OnlineFeatures["Online feature computation"]
+        Parser --> Retrieval["BM25 + FAISS retrieval"]
+        Retrieval --> Fusion["RRF fusion"]
+        Fusion --> OnlineFeatures["Online LTR features"]
         OnlineFeatures --> Ranker["Active relevance ranker"]
         Ranker --> API["FastAPI"]
         API --> Demo["Streamlit demo"]
     end
 
-    Bundle -. "verified assets" .-> Retrieval
-    Bundle -. "feature state" .-> OnlineFeatures
-    Bundle -. "model + contract" .-> Ranker
+    Bundle -. "loads verified indexes, feature state, and model" .-> Retrieval
 ```
 
 ### Search path
