@@ -1,694 +1,196 @@
 # MarketRank
 
-MarketRank is a CPU-first, multi-stage e-commerce search and ranking system built
-around the public Amazon ESCI Task 1 relevance judgments. The authoritative architecture is
-defined in [ELEPHANT.md](ELEPHANT.md).
+**A CPU-first, multi-stage e-commerce search and learning-to-rank system built on the
+[Amazon ESCI Shopping Queries Dataset](https://github.com/amazon-science/esci-data).**
 
-This repository has completed the core roadmap through **Goldfish 016A**: environment/tooling,
-reproducible ESCI data
-foundations, persisted fixed-catalog BM25 retrieval, protocol-safe metric primitives, and a
-checkpointed MiniLM/FAISS dense retriever. Deterministic RRF fusion now produces partitioned
-fixed-cohort retrieval reports with grouped confidence intervals, slices, paired comparisons,
-and a combined sparse+dense memory gate. A deterministic query parser and ordered 44-column
-`ltr_core_v1` now produce bounded closed-pool and retrieved-union feature artifacts with
-leakage, distribution, parity, and resource evidence. Exact grouped populations now train and
-persist directly comparable pointwise LightGBM and LambdaMART models with validation-only early
-stopping, reload parity, explanation evidence, and a resource gate. Protocol-separated
-closed-pool and end-to-end validation reports now provide grouped intervals, slices, ABL-01–05
-evidence, failure analysis, experiment lineage, and deterministic champion selection. Exactly
-one active-relevance contract is promoted without consulting project test. An explicit immutable
-serving bundle now packages verified retrieval/model lineage and a safe indexed product
-projection. The offline runtime exposes bounded search through validated FastAPI contracts with
-readiness and degraded fallbacks. A thin localhost-only Streamlit client now compares ranking
-modes with product cards, provenance, rank movement, bounded debug features, latency, lineage,
-and explicit dataset limitations. A fail-closed release-qualification stage now verifies an
-explicit bundle's offline startup, readiness, six-mode API latency, modest concurrency, peak RSS,
-safe host facts, and immutable lineage on the exact M3/8 GB reference host. A frozen finalizer now
-uses the untouched project-test split without reselection and packages protocol-separated tables,
-ablations, negative findings, lineage, plots, validated demo screenshots, limitations, and clean
-reproduction evidence. The path is persisted-fixture validated; this checkout contains no real
-portfolio artifact DAG or screenshots, so it makes no production numeric claim.
+MarketRank is an end-to-end search project: it validates and versions the source data, retrieves
+products with lexical and semantic models, learns a final ordering from relevance judgments,
+evaluates each stage under explicit protocols, and serves the resulting system through a local API
+and interactive demo.
 
-Goldfish 016A makes the real workflow storage-conscious without changing judged-pool science. The
-default `esci_task1_us_compact_catalog_v1` retains every product judged for a portfolio query plus
-100,000 seeded SHA-256-selected, label-blind distractors. Retrieval, latency, and resource evidence
-is explicitly compact-catalog evidence and is never described as full-catalog performance.
+The project is designed to run on an Apple M3 Mac with 8 GB of unified memory. Expensive workflows
+are isolated into resumable offline stages; application startup only loads verified, immutable
+artifacts.
 
-## Reference environment
+> **Status:** The core implementation is complete through Goldfish 016A. The real frozen portfolio
+> artifact lineage and final benchmark package are still being produced, so this repository does
+> not yet publish final relevance, latency, or memory claims.
 
-The required local reference environment is:
+## System design
 
-- Apple M3 Mac;
-- 8 GB unified memory;
-- macOS;
-- Python 3.11;
-- CPU-first execution, with no CUDA or required MPS support;
-- target peak process RSS of 5.5 GB for required workflows.
+```mermaid
+flowchart LR
+    subgraph Offline["Offline build, training, and evaluation"]
+        ESCI["Amazon ESCI data"] --> Foundation["Validated data foundation"]
+        Foundation --> BM25["BM25 index"]
+        Foundation --> Dense["MiniLM embeddings + FAISS"]
+        BM25 --> RRF["Reciprocal-rank fusion"]
+        Dense --> RRF
+        RRF --> Features["44-feature LTR matrix"]
+        Foundation --> Features
+        Features --> Pointwise["Pointwise LightGBM"]
+        Features --> Lambda["LambdaMART"]
+        Pointwise --> Evaluation["Protocol-separated evaluation"]
+        Lambda --> Evaluation
+        Evaluation --> Champion["Validation-selected champion"]
+        Champion --> Bundle["Immutable serving bundle"]
+    end
 
-Later data processing, embedding, training, evaluation, and serving workflows will run as
-separate stages so macOS can reclaim memory between them. Performance claims must be measured
-on this local reference environment.
+    subgraph Online["Local online search"]
+        Query["User query"] --> Parser["Deterministic query parser"]
+        Parser --> Retrieval["BM25 + dense retrieval"]
+        Retrieval --> Fusion["RRF candidate fusion"]
+        Fusion --> OnlineFeatures["Online feature computation"]
+        OnlineFeatures --> Ranker["Active relevance ranker"]
+        Ranker --> API["FastAPI"]
+        API --> Demo["Streamlit demo"]
+    end
 
-## Prerequisites
+    Bundle -. "verified assets" .-> Retrieval
+    Bundle -. "feature state" .-> OnlineFeatures
+    Bundle -. "model + contract" .-> Ranker
+```
 
-Install Python 3.11, [`uv`](https://docs.astral.sh/uv/), and the OpenMP runtime required by
-LightGBM on macOS. With Homebrew:
+### Search path
+
+1. **Data foundation** — validates the pinned ESCI release, freezes leakage-safe query groups, and
+   constructs canonical queries, products, judgments, and product documents.
+2. **Candidate retrieval** — combines a persisted BM25 index with normalized MiniLM embeddings and
+   exact FAISS inner-product search.
+3. **Fusion and features** — merges candidates using deterministic reciprocal-rank fusion and
+   computes the ordered `ltr_core_v1` feature set with offline/online parity checks.
+4. **Learning to rank** — trains directly comparable pointwise LightGBM and LambdaMART models on
+   identical grouped populations.
+5. **Selection and serving** — selects one active relevance stage using validation only, packages
+   its complete lineage, and serves bounded searches through FastAPI and Streamlit.
+
+## Engineering highlights
+
+- **Reproducible artifact DAG:** every promoted stage is immutable, checksummed, config-hashed, and
+  recursively tied to exact parent manifests.
+- **Protocol-safe evaluation:** retrieval and closed-pool ranking metrics remain separate so
+  unjudged catalog products are never silently treated as irrelevant.
+- **Leakage-resistant selection:** complete normalized-query groups define the splits; model and
+  champion selection use validation only, while project test stays frozen until finalization.
+- **Resource-aware execution:** checkpointed product embedding, partitioned feature/evaluation
+  artifacts, and separate processes keep required workflows within an M3/8 GB design envelope.
+- **Offline runtime:** after explicit data and model acquisition, training, evaluation, serving,
+  and the demo require no network access.
+- **Graceful degradation:** serving can fall back from a learned ranker to RRF or from one retriever
+  to the other without rebuilding artifacts at request time.
+
+## Dataset and benchmark
+
+MarketRank uses official ESCI Task 1 relevance judgments for the US locale with
+`small_version == 1`. The default portfolio benchmark is a deterministic compact catalog that
+contains every product judged for a portfolio query plus 100,000 label-blind, SHA-256-selected
+distractors.
+
+The compact catalog makes full local experimentation practical, but it is not Amazon's production
+catalog and must not be described as full-catalog performance. ESCI relevance judgments are the
+only supervised targets; the project does not invent price, inventory, conversion, seller, or
+other marketplace signals.
+
+### Evaluation boundaries
+
+| Protocol | Population | Valid measures |
+|---|---|---|
+| Retrieval | Fixed compact catalog | Judged recall, exact hit, judged MRR, known-judgment coverage, unjudged rate |
+| Closed-pool ranking | Complete judged product set per query | Official-gain NDCG, precision, MAP, MRR, exact hit |
+| End-to-end diagnostic | Retrieved hybrid candidate union | Qrels-aware retrieval diagnostics; no naive catalog NDCG |
+
+Query-level bootstrap intervals, slices, ablations, failure analysis, and exact experiment lineage
+are persisted with the evaluation artifacts. Final test scoring occurs once per named release
+generation and does not trigger retuning.
+
+## Technology
+
+| Area | Stack |
+|---|---|
+| Data and contracts | Python 3.11, Polars, Pydantic, Parquet |
+| Sparse retrieval | Deterministic tokenization, persisted BM25 |
+| Dense retrieval | Sentence Transformers, MiniLM, NumPy memmaps, FAISS CPU |
+| Ranking | LightGBM pointwise regression and LambdaMART |
+| Evaluation | Grouped metrics, bootstrap confidence intervals, protocol-specific reports |
+| Serving and demo | FastAPI, Uvicorn, Streamlit |
+| Quality | uv, Ruff, strict mypy, pytest, pre-commit |
+
+## Quick start
+
+The required local environment is macOS, Python 3.11, and the OpenMP runtime used by LightGBM.
 
 ```bash
 brew install python@3.11 uv libomp
-```
-
-The project constrains Python to the 3.11 series so local and optional remote batch
-environments use the same interpreter contract.
-
-Pre-commit also requires a modern Git. Verify that the first `git` on `PATH` supports the
-command it uses:
-
-```bash
-git --version
-git ls-files --deduplicate >/dev/null
-```
-
-If an obsolete `/usr/local/bin/git` shadows macOS Git, remove that stale installation or put
-`/usr/bin` ahead of it before running pre-commit. Installing a current Git with Homebrew is
-another valid fix.
-
-## Setup
-
-Create the locked development environment:
-
-```bash
-uv sync --group dev --python 3.11
+uv sync --frozen --group dev --python 3.11
 ```
 
 Run the quality gates:
 
 ```bash
+uv lock --check
 uv run ruff format --check .
 uv run ruff check .
 uv run mypy src tests
 uv run pytest
 ```
 
-Install the local pre-commit hooks:
+Data and pretrained model downloads are intentionally explicit. To build the complete portfolio
+lineage, follow the [final release runbook](docs/runbooks/final-portfolio-release.md).
 
-```bash
-uv run pre-commit install
-uv run pre-commit run --all-files
-```
-
-The hooks call tools from `uv.lock`; they do not create separate unpinned hook environments.
-
-## Dependency locking
-
-`pyproject.toml` declares direct dependencies and tool configuration. `uv.lock` records the
-complete resolved environment. Dependency changes must update both files with `uv lock` or
-`uv sync`, and CI/local verification must use `uv run` rather than globally installed tools.
-
-Do not hand-edit `uv.lock`.
-
-## Configuration contract
-
-[`configs/base.yaml`](configs/base.yaml) is the first versioned runtime configuration. Load it
-through `market_rank.config.load_config`; do not parse project YAML independently in future
-modules.
-
-The loader:
-
-- merges YAML files from left to right, recursively for mappings;
-- applies explicit dotted-key overrides last;
-- rejects duplicate YAML keys, non-string keys, unknown fields, and invalid types;
-- returns immutable Pydantic models;
-- serializes resolved semantics to canonical sorted JSON;
-- computes a full SHA-256 configuration hash;
-- records source paths for lineage without including machine-specific paths in that hash.
-
-Example:
-
-```python
-from pathlib import Path
-
-from market_rank.config import load_config
-
-resolved = load_config(
-    [Path("configs/base.yaml")],
-    overrides={"runtime.max_threads": 2},
-)
-print(resolved.sha256)
-```
-
-Later Goldfish tasks will add component schemas. They must extend the typed root model rather
-than accepting arbitrary keys.
-
-## Artifact lifecycle
-
-[`market_rank.artifacts`](src/market_rank/artifacts.py) is the only stage-output promotion
-protocol. An `ArtifactStore` is rooted at one explicit allowlisted directory. Artifact IDs
-and paths follow:
-
-```text
-artifact_type/dataset_version/profile/component_version/config_sha256/
-```
-
-Writers use a temporary sibling directory and must explicitly commit inside the context. A
-commit hashes every regular payload file, writes a strict canonical `manifest.json`, writes a
-matching `_SUCCESS` marker, and atomically renames the directory into place. Exceptions and
-uncommitted contexts discard temporary output. Existing targets are immutable.
-
-```python
-from pathlib import Path
-
-from market_rank.artifacts import ArtifactStore
-from market_rank.config import load_config
-
-config = load_config([Path("configs/base.yaml")])
-store = ArtifactStore(config.config.paths.artifacts_dir)
-
-with store.stage(
-    artifact_type="example",
-    dataset_version="dataset-v1",
-    profile="development",
-    component_version="v1",
-    config_sha256=config.sha256,
-    code_revision="local-dev",
-) as stage:
-    stage.path("payload.txt").write_text("complete\n", encoding="utf-8")
-    artifact = stage.commit()
-
-verified = store.load(artifact.manifest.artifact_id)
-```
-
-Consumers load only explicit artifact IDs. Loading recursively verifies every declared parent
-artifact and fails closed on path escape, symbolic links, missing success state, undeclared
-files, byte-size or checksum changes, strict schema violations, or parent-manifest hash
-mismatches. “Latest” aliases are not dependencies.
-
-## Download and validate ESCI raw data
-
-[`configs/data/esci-release-7916cdf6ab75.json`](configs/data/esci-release-7916cdf6ab75.json)
-pins the official Amazon Science repository revision, Apache-2.0 license, paper, exact source
-filenames, byte sizes, and SHA-256 checksums. The three source files total about 1.16 GB. They
-are deliberately not downloaded by setup, tests, imports, validation-only calls, or
-application startup.
-
-From the repository root, explicitly run:
-
-```bash
-uv run market-rank data download-esci
-```
-
-The equivalent fully explicit console command is:
-
-```bash
-market-rank data download-esci \
-  --manifest configs/data/esci-release-7916cdf6ab75.json \
-  --config configs/base.yaml
-```
-
-The workflow distinguishes four states:
-
-1. **Pinned release metadata** is the tracked JSON contract.
-2. **Downloaded raw files** are verified bytes in `data/raw/esci/`.
-3. **Validated raw dataset** is the complete structural validation report.
-4. **Promoted validation artifact** is immutable evidence under
-   `artifacts/raw-validation/...`.
-
-Downloads use bounded 1 MiB chunks, separate connect/read timeouts, bounded transient retries,
-same-directory hidden partials, incremental size/SHA-256 verification, and atomic promotion.
-Validation then lazily checks exact columns, semantic types, required values, domains, primary
-keys, query consistency, and cross-file joins. Invalid reports retain full programmatic detail
-and cannot be promoted.
-
-Reruns are safe and idempotent: matching files are rehashed and reused without network access,
-and a compatible immutable validation artifact is reused. A mismatched existing final file is
-never overwritten; the command exits with a concise error and leaves it untouched for manual
-inspection. After confirming no process is using a hidden `.partial-*.tmp` file left by an
-abrupt termination, that partial may be removed and the command rerun. Permanent HTTP errors
-are not retried; transient connection and selected HTTP failures retry at most three times.
-
-After successful acquisition, core validation and downstream work can run offline.
-
-## Build Task-1 US splits and nested profiles
-
-Once the current configuration has a successful raw-validation artifact, run:
-
-```bash
-uv run market-rank data build-esci-profiles
-```
-
-The fully explicit form is:
-
-```bash
-market-rank data build-esci-profiles \
-  --manifest configs/data/esci-release-7916cdf6ab75.json \
-  --config configs/base.yaml
-```
-
-If configuration semantics changed since the last acquisition, rerun `download-esci` first.
-Matching raw files are rehashed without network access and a compatible validation artifact is
-published for the new configuration hash.
-
-Goldfish 005 applies only `product_locale == "us"` and `small_version == 1`. It groups queries
-using versioned Unicode NFKC, case folding, and whitespace collapse. Official test queries are
-frozen as project test. Any official-train query whose normalized text also occurs in official
-test is quarantined; remaining train groups receive deterministic approximately 85%/15%
-project train/validation assignments.
-
-Development and portfolio use stable label-blind priorities over complete normalized-query
-groups. Defaults target 5,000 and 20,000 groups, with development guaranteed to be a subset of
-portfolio. The promoted artifact contains a compact assignment Parquet and strict audit
-manifest under `artifacts/dataset-profiles/...`. It never copies query text to terminal output,
-never samples judgment rows, and never uses ESCI labels to choose splits or profiles. A rerun
-verifies and reuses a compatible immutable artifact.
-
-## Build the canonical M2 data foundation
-
-After Goldfish 005 succeeds, run:
-
-```bash
-uv run market-rank data build-esci-foundation
-```
-
-The stage publishes canonical queries, sources, judgments, selected catalog products, versioned
-product documents, fixed retrieval membership, no-text exclusions, and complete
-development/portfolio judged pools. It keeps official label IDs and gains separate. Compact mode
-retains every portfolio-judged product and adds a deterministic label-blind distractor sample from
-all Task-1 US participation; full mode preserves the original full source catalog. Both modes
-record exact selection counts, table keys, counts, and checksums.
-
-Product documents use the versioned marker template described in
-[`docs/goldfish/006-data-foundation.md`](docs/goldfish/006-data-foundation.md), while official
-display fields remain unchanged. A preliminary resource gate estimates sparse index, 384-wide
-float32 vectors, ID/display state, and runtime reserve against the 5.5 GB process-RSS limit. An
-over-limit estimate prevents promotion; later retrieval Goldfishes replace estimates with
-measured component and combined RSS.
-
-See the [`Goldfish 016A compact-catalog contract`](docs/goldfish/016a-compact-catalog-benchmark.md)
-for the sampling, audit, and claim boundaries. Changing catalog mode or distractor target changes
-the configuration hash and requires a complete downstream rebuild.
-
-The complete local data sequence is:
-
-```bash
-uv run market-rank data download-esci
-uv run market-rank data build-esci-profiles
-uv run market-rank data build-esci-foundation
-```
-
-All three commands are idempotent. After the explicit initial download they operate offline,
-verify their exact immutable parents, and reuse compatible outputs.
-
-## Build and load the BM25 baseline
-
-After the current data foundation exists, build the persisted fixed-catalog index:
-
-```bash
-uv run market-rank retrieval build-bm25
-```
-
-Goldfish 007 uses deterministic Unicode tokenization and an audited BM25 implementation. The
-build writes document-term frequencies to a temporary disk-backed SQLite table in bounded
-batches, then streams a sorted vocabulary, statistics, and compact typed posting arrays into an
-immutable `sparse-index` artifact. Runtime memory-maps those arrays; it never rebuilds or
-downloads at load time.
-
-Reusable package APIs support both catalog top-K search and explicit product-pair scoring. Pair
-scoring returns a finite value for every requested catalog product, including zero when no term
-matches, so later closed-pool features do not confuse top-K absence with missing evidence. Cold
-reload is exact and compatible command reruns reuse the existing artifact.
-
-The accompanying metric layer keeps candidate populations explicit:
-
-- `closed_pool_task1_v1` permits official-gain NDCG, thresholded precision/MAP/MRR, and Exact
-  Hit only when the complete judged product set is ranked;
-- `retrieval_catalog_task1_us_v1` permits judged Recall, Exact Hit, judged MRR, known-judgment
-  coverage, and unjudged rate, but deliberately exposes no naive catalog NDCG/MAP/precision.
-
-See [`docs/goldfish/007-sparse-retrieval-evaluation.md`](docs/goldfish/007-sparse-retrieval-evaluation.md)
-for persistence, formula, resource, and protocol details.
-
-## Build and load the dense baseline
-
-Cache the exact pinned model only through the explicit network command, then run the dense build
-offline:
-
-```bash
-uv run market-rank retrieval cache-minilm --allow-network
-uv run market-rank retrieval build-dense
-```
-
-Goldfish 008 pins `sentence-transformers/all-MiniLM-L6-v2` to a full commit revision. Product
-documents are encoded on CPU in batches of 16 into a normalized 384-wide float32 `.npy` memmap.
-Each completed contiguous range is durably checkpointed, so an interrupted local job resumes at
-the first unfinished product instead of starting over.
-
-The builder creates an exact FAISS CPU `IndexFlatIP`, persists the ordered product/document map,
-and records build phases, artifact bytes, peak RSS, and deterministic warm query-latency samples.
-Search uses cosine-equivalent inner products with product-ID tie breaking. Explicit-pair scoring
-reads bounded rows from the vector memmap and covers every requested known catalog product even
-when it was absent from dense top-K.
-
-Runtime loading verifies immutable Goldfish 006 lineage, vector dtype/shape/norms, catalog
-ordinals, FAISS type/count/dimension, and query-encoder model identity. It never downloads model
-weights or rebuilds embeddings/indexes. See
-[`docs/goldfish/008-dense-retrieval-faiss.md`](docs/goldfish/008-dense-retrieval-faiss.md).
-
-## Evaluate sparse, dense, and hybrid retrieval
-
-After both compatible indexes exist, build the development report or the larger portfolio
-report:
-
-```bash
-uv run market-rank retrieval evaluate-hybrid
-uv run market-rank retrieval evaluate-hybrid --profile portfolio
-```
-
-Goldfish 009 unions BM25 and dense top-150 results with RRF (`k=60`), deduplicates them, retains
-both sources' scores/ranks/retriever/index provenance, applies deterministic tie breaking, and
-caps the hybrid union at 200 products. One empty source is represented as degraded provenance;
-no-candidate queries remain explicit evaluation rows.
-
-All three stages are compared on the identical fixed catalog and profile query cohort under
-`retrieval_catalog_task1_us_v1`. Reports include only judged Recall, Exact Hit, judged MRR,
-known-judgment coverage, and unjudged rate for `E` and `E+S` at cutoffs 10 and 100—never naive
-catalog precision, MAP, or NDCG.
-
-Candidate and query-metric rows are partitioned. Aggregate reports include fixed-seed 95%
-confidence intervals that resample normalized-query groups, named query-length/source/split/
-Exact-presence slices, and paired hybrid-vs-sparse/dense/best-single improvements. Promotion
-also requires the simultaneously loaded sparse+dense process and completed evaluation phase to
-remain below the configured 5.5GB RSS limit. See
-[`docs/goldfish/009-hybrid-retrieval-evaluation.md`](docs/goldfish/009-hybrid-retrieval-evaluation.md).
-
-## Build query understanding and ranking features
-
-After the compatible Goldfish 006–009 artifacts exist, materialize the development or portfolio
-feature artifact:
-
-```bash
-uv run market-rank features build-ranking
-uv run market-rank features build-ranking --profile portfolio
-```
-
-Goldfish 010 persists a bounded `query-parser-v1` state from official label-free catalog
-brand/color values. It performs NFKC/casefold/whitespace normalization, versioned tokenization,
-conservative number/unit/model/compatibility extraction, longest-boundary brand matching, color
-aliases, explicit spelling aliases, entity confidences, warnings, and deterministic hashes.
-Parser signals are ranking evidence and never hard filters.
-
-The ordered 44-feature `ltr_core_v1` registry combines query/product interactions with direct
-BM25 and dense scores, bounded within-set rank fractions, and direct-score RRF. Category codes
-fit only portfolio project-train source fields with reserved missing/unknown codes. Labels,
-target history, product identity, absolute ranks/counts, and original top-K provenance are not
-model features.
-
-The closed matrix contains every catalog-eligible judged pair with label/gain metadata and
-counts judgments excluded for lacking a retrievable document; the retrieved-union matrix is
-physically label-free. Both populations directly score every eligible pair with both indexes.
-Query groups stay intact in bounded Parquet partitions, and reports persist population
-distributions, shared-formula parity vectors, exact four-parent lineage, leakage checks, and a
-5.5GB RSS promotion gate. See
-[`docs/goldfish/010-query-understanding-ranking-features.md`](docs/goldfish/010-query-understanding-ranking-features.md).
-
-## Train pointwise and LambdaMART rankers
-
-After building a compatible feature artifact, train both supervised objectives on the exact same
-development or portfolio population:
-
-```bash
-uv run market-rank ranking train
-uv run market-rank ranking train --profile portfolio
-```
-
-Goldfish 011 materializes only catalog-eligible judged project-train and validation rows. Project
-test is excluded before materialization. Complete query groups are sorted and converted to exact
-group arrays; groups with fewer than two rows or one distinct label are audited and excluded
-without sampling. Label IDs remain separate from verified official gains.
-
-Pointwise LightGBM uses `regression_l2`; LambdaMART uses `lambdarank`. Both consume identical
-float32 `ltr_core_v1` matrices, labels, group checksums, categorical fields, seeds, threads, and
-official gains. Validation NDCG@10/@20 alone selects the best iteration. The command does not
-evaluate project test or select a champion.
-
-The immutable artifact includes LightGBM text models, population predicates/query IDs/groups,
-per-iteration validation history, feature importance, bounded contribution samples, and cold
-reload parity. Both models are loaded together before promotion, and matrix/training/reload RSS
-must remain below 5.5GB. See
-[`docs/goldfish/011-pointwise-lambdamart-rankers.md`](docs/goldfish/011-pointwise-lambdamart-rankers.md).
-
-## Evaluate ranking and promote active relevance
-
-After compatible Goldfish 009–011 artifacts exist, evaluate the validation cohort and publish
-one active-relevance contract:
-
-```bash
-uv run market-rank ranking evaluate
-uv run market-rank ranking evaluate --profile portfolio
-```
-
-Goldfish 012 ranks every complete validation judged pool with direct RRF, pointwise LightGBM,
-and LambdaMART. Only this closed protocol emits official-gain NDCG, Precision, MAP, MRR, and
-Exact Hit. The separately named end-to-end diagnostic reorders the fixed hybrid union and emits
-only qrels-aware retrieval metrics; unjudged catalog products never become false negatives.
-
-Query-level facts feed normalized-query-group bootstrap intervals and query/entity/source/
-judgment-composition slices. ABL-01–03 evidence is inherited from Goldfish 009; ABL-04 compares
-LambdaMART with closed-pool RRF and ABL-05 compares LambdaMART with pointwise on identical pools.
-Bounded largest-delta rows support failure analysis.
-
-The deterministic validation policy promotes a learned model only when it improves at least one
-configured NDCG cutoff without a material regression on another. Otherwise the simpler valid
-stage remains active. The immutable contract records one complete score/rank contract and RRF
-fallback, while project test remains unmaterialized. See
-[`docs/goldfish/012-ranking-evaluation-champion-selection.md`](docs/goldfish/012-ranking-evaluation-champion-selection.md).
-
-## Promote and serve one explicit relevance bundle
-
-After compatible Goldfish 006–012 portfolio artifacts exist, promote the offline serving
-coordinates and indexed product projection:
-
-```bash
-uv run market-rank serving promote --profile portfolio
-```
-
-The command prints the immutable bundle ID. Start the local API with that complete ID:
+### Run an existing serving bundle
 
 ```bash
 uv run market-rank serving run --bundle-id \
   serving-bundle/<dataset-version>/portfolio/serving-bundle-v1/<config-sha256>
 ```
 
-Startup binds to `127.0.0.1:8000`, verifies local persisted assets, and never builds or
-downloads. The API exposes `/health/live`, `/health/ready`, `/v1/search`, `/v1/model-info`,
-`/v1/artifact-info`, and the bounded local `/v1/debug/explain`. Search mode defaults to
-`active`, which resolves the exact Goldfish 012 champion; explicit `bm25`, `dense`, `hybrid`,
-`pointwise`, and `lambdamart` modes support controlled comparisons. One unavailable retriever
-degrades to the other source, while model failure restores RRF and two unavailable retrievers
-block readiness. See
-[`docs/goldfish/013-serving-bundle-fastapi.md`](docs/goldfish/013-serving-bundle-fastapi.md).
-
-## Run the local portfolio demo
-
-Keep the explicit API process above running. In a second terminal, verify readiness and launch
-the API-backed UI:
+In another terminal:
 
 ```bash
 uv run market-rank demo check
 uv run market-rank demo run
 ```
 
-Open `http://127.0.0.1:8501`. The demo and API bind only to loopback. Streamlit does not load
-models or artifacts: it sends strict requests to FastAPI and displays validated results. Compare
-the active champion with BM25, dense, hybrid RRF, pointwise, or LambdaMART; inspect rank movement,
-retrieval provenance, fallbacks, latency, and reproduction IDs; and optionally request bounded
-feature values. List-composition statistics are presentation diagnostics, not relevance or
-fairness claims. See
-[`docs/goldfish/014-streamlit-portfolio-demo.md`](docs/goldfish/014-streamlit-portfolio-demo.md).
+The API listens on `http://127.0.0.1:8000` and the demo on `http://127.0.0.1:8501`. Both are
+loopback-only by default.
 
-## Qualify a local release candidate
-
-From a clean Git revision and a fresh terminal on the Apple M3/8 GB Mac, run the frozen `rc1`
-workload against one explicit portfolio serving bundle:
-
-```bash
-uv run market-rank qualification run \
-  --bundle-id serving-bundle/<dataset-version>/portfolio/serving-bundle-v1/<config-sha256> \
-  --background-conditions "AC power; all nonessential applications closed"
-```
-
-The stage blocks socket connections, requires AC power and the exact reference hardware, measures
-cold bundle load, all six ranking modes, stage latency, concurrency two, and process peak RSS, and
-promotes evidence only when every gate passes. Failed JSON evidence is retained separately under
-`reports/generated/qualification/failed/`. This repository currently has no production portfolio
-bundle, so it makes no final latency or RSS claim yet. See the
-[`Goldfish 015 design`](docs/goldfish/015-hardening-m3-qualification.md) and
-[`local qualification runbook`](docs/runbooks/local-release-qualification.md).
-
-## Finalize the frozen portfolio release
-
-After the exact portfolio ranking evaluation, serving bundle, and passing qualification exist,
-commit the release implementation and verify it from a clean worktree:
-
-```bash
-uv run market-rank portfolio verify-reproduction \
-  --output reports/generated/clean-reproduction.json
-```
-
-Capture the three named real-demo screenshots, then perform the frozen project-test evaluation for
-this release generation:
-
-```bash
-uv run market-rank portfolio finalize \
-  --ranking-evaluation-id <exact-ranking-evaluation-id> \
-  --serving-bundle-id <exact-serving-bundle-id> \
-  --qualification-id <exact-release-qualification-id> \
-  --reproduction-evidence reports/generated/clean-reproduction.json \
-  --screenshots-dir reports/generated/screenshots
-```
-
-The finalizer verifies recursive lineage, split and protocol boundaries, the M3/8 GB qualification,
-clean revision/config evidence, and PNG structure before reading test. It then writes one immutable
-release containing raw metric Parquet, CSV tables, SVG plots, screenshots, lineage, limitations,
-and the generated report. It reuses a compatible completed artifact on rerun. See the
-[`Goldfish 016 design`](docs/goldfish/016-frozen-portfolio-final-report.md) and
-[`final release runbook`](docs/runbooks/final-portfolio-release.md).
-
-## Download and offline boundary
-
-Internet access is allowed only during explicit setup operations:
-
-1. installing or updating locked Python packages;
-2. downloading the official ESCI dataset;
-3. downloading approved open-source pretrained model revisions.
-
-Downloaded data, model caches, generated indexes, features, experiments, and evaluation
-artifacts are local state and are excluded from Git. Once those explicit downloads are
-complete, the required core workflow must run without internet access. Application startup
-must never download dependencies, data, or models.
-
-## Optional Colab batch acceleration
-
-Free Google Colab may later accelerate an isolated offline batch such as product embedding
-generation or optional cross-encoder scoring. It is not the canonical runtime and cannot be
-used for final macOS latency or memory claims.
-
-A Colab-produced artifact is acceptable only when the batch:
-
-- invokes reusable package or CLI logic rather than notebook-only code;
-- uses the same resolved configuration and pinned model revision;
-- exports platform-neutral data plus ordered ID mappings;
-- records input/output checksums, dependency versions, and an artifact manifest;
-- passes local compatibility and parity validation before promotion.
-
-FastAPI, Streamlit, smoke tests, artifact loading, and the required portfolio workflow are
-local-first.
-
-## Current layout
+## Repository structure
 
 ```text
 ecommerce_market_ranker/
-├── ELEPHANT.md
-├── README.md
-├── pyproject.toml
-├── uv.lock
-├── .pre-commit-config.yaml
-├── configs/
-│   ├── base.yaml
-│   └── data/esci-release-7916cdf6ab75.json
-├── docs/goldfish/002-strict-configuration.md
-├── docs/goldfish/003-artifact-protocol.md
-├── docs/goldfish/004-esci-raw-validation.md
-├── docs/goldfish/004a-esci-download-command.md
-├── docs/goldfish/005-task1-us-splits-profiles.md
-├── docs/goldfish/006-data-foundation.md
-├── docs/goldfish/007-sparse-retrieval-evaluation.md
-├── docs/goldfish/008-dense-retrieval-faiss.md
-├── docs/goldfish/009-hybrid-retrieval-evaluation.md
-├── docs/goldfish/010-query-understanding-ranking-features.md
-├── docs/goldfish/011-pointwise-lambdamart-rankers.md
-├── docs/goldfish/012-ranking-evaluation-champion-selection.md
-├── docs/goldfish/013-serving-bundle-fastapi.md
-├── docs/goldfish/014-streamlit-portfolio-demo.md
-├── docs/goldfish/015-hardening-m3-qualification.md
-├── docs/goldfish/016-frozen-portfolio-final-report.md
-├── docs/goldfish/016a-compact-catalog-benchmark.md
-├── docs/goldfish/consolidated-roadmap.md
-├── docs/runbooks/final-portfolio-release.md
-├── docs/runbooks/local-release-qualification.md
+├── configs/                 # Typed, versioned runtime configuration
+├── docs/goldfish/           # Component design and acceptance records
+├── docs/runbooks/           # Qualification and final-release procedures
 ├── src/market_rank/
-│   ├── __init__.py
-│   ├── artifacts.py
-│   ├── cli.py
-│   ├── config.py
-│   ├── portfolio.py
-│   ├── qualification.py
-│   ├── data/
-│   │   ├── __init__.py
-│   │   ├── download.py
-│   │   ├── esci_raw.py
-│   │   ├── foundation.py
-│   │   └── profiles.py
-│   ├── evaluation/
-│   │   ├── __init__.py
-│   │   ├── metrics.py
-│   │   ├── ranking.py
-│   │   └── retrieval.py
-│   ├── features/
-│   │   ├── __init__.py
-│   │   ├── artifact.py
-│   │   ├── core.py
-│   │   └── registry.py
-│   ├── query/
-│   │   ├── __init__.py
-│   │   └── parser.py
-│   ├── ranking/
-│   │   ├── __init__.py
-│   │   ├── population.py
-│   │   └── training.py
-│   ├── retrieval/
-│   │   ├── __init__.py
-│   │   ├── dense.py
-│   │   ├── hybrid.py
-│   │   └── sparse.py
-│   ├── demo/
-│   │   ├── __init__.py
-│   │   ├── app.py
-│   │   ├── client.py
-│   │   └── presentation.py
-│   └── serving/
-│       ├── __init__.py
-│       ├── api.py
-│       ├── bundle.py
-│       ├── contracts.py
-│       └── orchestrator.py
-└── tests/
-    ├── integration/test_dense_retrieval.py
-    ├── integration/test_esci_foundation.py
-    ├── integration/test_ranker_training.py
-    ├── integration/test_ranking_evaluation.py
-    ├── integration/test_ranking_features.py
-    ├── integration/test_portfolio.py
-    ├── integration/test_qualification.py
-    ├── integration/test_retrieval_evaluation.py
-    ├── integration/test_sparse_retrieval.py
-    ├── integration/test_serving.py
-    ├── smoke/test_demo_app.py
-    ├── smoke/test_import.py
-    └── unit/
-        ├── test_artifacts.py
-        ├── test_config.py
-        ├── test_demo.py
-        ├── test_esci_download.py
-        ├── test_esci_profiles.py
-        ├── test_features.py
-        ├── test_hybrid.py
-        ├── test_metrics.py
-        ├── test_portfolio.py
-        ├── test_query_parser.py
-        ├── test_qualification.py
-        ├── test_ranking_evaluation.py
-        ├── test_training_population.py
-        └── test_esci_raw.py
+│   ├── data/                # Acquisition, validation, splits, foundation
+│   ├── retrieval/           # BM25, MiniLM/FAISS, RRF
+│   ├── features/            # Query understanding and LTR features
+│   ├── ranking/             # Training populations and LightGBM models
+│   ├── evaluation/          # Retrieval and ranking protocols
+│   ├── serving/             # Immutable bundle, orchestration, FastAPI
+│   └── demo/                # API-backed Streamlit client
+└── tests/                   # Unit, integration, and smoke coverage
 ```
 
-Optional Goldfish 017–018 extensions remain outside the completed core scope.
+## Documentation
+
+- [Technical design document](ELEPHANT.md) — authoritative end-state architecture and decisions
+- [Consolidated roadmap](docs/goldfish/consolidated-roadmap.md) — implemented Goldfish sequence and
+  optional extensions
+- [Final portfolio release runbook](docs/runbooks/final-portfolio-release.md) — frozen build,
+  evidence capture, and test finalization
+- [Local qualification runbook](docs/runbooks/local-release-qualification.md) — M3/8 GB latency,
+  readiness, and resource gates
+- [`configs/base.yaml`](configs/base.yaml) — canonical runtime configuration
+
+## Limitations
+
+- The benchmark is based on ESCI judgments, not live behavioral or business outcomes.
+- Unjudged retrieved products have unknown relevance; they are not presumed irrelevant.
+- The compact catalog is designed for local experimentation and is not an Amazon-scale claim.
+- The required system is CPU-first and local; it is not a distributed production search service.
+- Diversity and neural reranking are optional extensions and are not part of the core champion.
+
+## License
+
+Apache-2.0.
