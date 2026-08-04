@@ -14,9 +14,9 @@ tested, documented, reproducible, and independently reviewable.
 
 | Scope | Target |
 |---|---:|
-| Current implemented sequence | Through Goldfish 010 |
+| Current implemented sequence | Through Goldfish 011 |
 | Core portfolio-ready project | Goldfish 016 |
-| Remaining core Goldfishes | Approximately 6 |
+| Remaining core Goldfishes | Approximately 5 |
 | Optional neural and diversity extensions | Goldfish 017–018 |
 
 Goldfish 004A is an additional completed extension even though it does not advance the primary
@@ -63,6 +63,8 @@ candidate/pool feature materialization, leakage checks, distribution reports, pe
 state, and offline/online formula parity fixtures.
 
 ### Goldfish 011 — Pointwise and LambdaMART Rankers
+
+**Status: Implemented.**
 
 Construct the exact judged training populations and group arrays, train pointwise and
 LambdaMART models, enforce official gains, support early stopping, persist models and training

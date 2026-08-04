@@ -4,14 +4,16 @@ MarketRank is a planned CPU-first, multi-stage e-commerce search and ranking sys
 around the public Amazon ESCI Task 1 relevance judgments. The authoritative architecture is
 defined in [ELEPHANT.md](ELEPHANT.md).
 
-This repository has completed **Goldfish 010**: environment/tooling, reproducible ESCI data
+This repository has completed **Goldfish 011**: environment/tooling, reproducible ESCI data
 foundations, persisted fixed-catalog BM25 retrieval, protocol-safe metric primitives, and a
 checkpointed MiniLM/FAISS dense retriever. Deterministic RRF fusion now produces partitioned
 fixed-cohort retrieval reports with grouped confidence intervals, slices, paired comparisons,
 and a combined sparse+dense memory gate. A deterministic query parser and ordered 44-column
 `ltr_core_v1` now produce bounded closed-pool and retrieved-union feature artifacts with
-leakage, distribution, parity, and resource evidence. It intentionally contains no ranking
-models, serving, or demo logic.
+leakage, distribution, parity, and resource evidence. Exact grouped populations now train and
+persist directly comparable pointwise LightGBM and LambdaMART models with validation-only early
+stopping, reload parity, explanation evidence, and a resource gate. It intentionally contains
+no champion selection, serving, or demo logic.
 
 ## Reference environment
 
@@ -30,10 +32,11 @@ on this local reference environment.
 
 ## Prerequisites
 
-Install Python 3.11 and [`uv`](https://docs.astral.sh/uv/). With Homebrew:
+Install Python 3.11, [`uv`](https://docs.astral.sh/uv/), and the OpenMP runtime required by
+LightGBM on macOS. With Homebrew:
 
 ```bash
-brew install python@3.11 uv
+brew install python@3.11 uv libomp
 ```
 
 The project constrains Python to the 3.11 series so local and optional remote batch
@@ -383,6 +386,32 @@ distributions, shared-formula parity vectors, exact four-parent lineage, leakage
 5.5GB RSS promotion gate. See
 [`docs/goldfish/010-query-understanding-ranking-features.md`](docs/goldfish/010-query-understanding-ranking-features.md).
 
+## Train pointwise and LambdaMART rankers
+
+After building a compatible feature artifact, train both supervised objectives on the exact same
+development or portfolio population:
+
+```bash
+uv run market-rank ranking train
+uv run market-rank ranking train --profile portfolio
+```
+
+Goldfish 011 materializes only catalog-eligible judged project-train and validation rows. Project
+test is excluded before materialization. Complete query groups are sorted and converted to exact
+group arrays; groups with fewer than two rows or one distinct label are audited and excluded
+without sampling. Label IDs remain separate from verified official gains.
+
+Pointwise LightGBM uses `regression_l2`; LambdaMART uses `lambdarank`. Both consume identical
+float32 `ltr_core_v1` matrices, labels, group checksums, categorical fields, seeds, threads, and
+official gains. Validation NDCG@10/@20 alone selects the best iteration. The command does not
+evaluate project test or select a champion.
+
+The immutable artifact includes LightGBM text models, population predicates/query IDs/groups,
+per-iteration validation history, feature importance, bounded contribution samples, and cold
+reload parity. Both models are loaded together before promotion, and matrix/training/reload RSS
+must remain below 5.5GB. See
+[`docs/goldfish/011-pointwise-lambdamart-rankers.md`](docs/goldfish/011-pointwise-lambdamart-rankers.md).
+
 ## Download and offline boundary
 
 Internet access is allowed only during explicit setup operations:
@@ -435,6 +464,7 @@ ecommerce_market_ranker/
 ├── docs/goldfish/008-dense-retrieval-faiss.md
 ├── docs/goldfish/009-hybrid-retrieval-evaluation.md
 ├── docs/goldfish/010-query-understanding-ranking-features.md
+├── docs/goldfish/011-pointwise-lambdamart-rankers.md
 ├── docs/goldfish/consolidated-roadmap.md
 ├── src/market_rank/
 │   ├── __init__.py
@@ -459,6 +489,10 @@ ecommerce_market_ranker/
 │   ├── query/
 │   │   ├── __init__.py
 │   │   └── parser.py
+│   ├── ranking/
+│   │   ├── __init__.py
+│   │   ├── population.py
+│   │   └── training.py
 │   └── retrieval/
 │       ├── __init__.py
 │       ├── dense.py
@@ -467,6 +501,7 @@ ecommerce_market_ranker/
 └── tests/
     ├── integration/test_dense_retrieval.py
     ├── integration/test_esci_foundation.py
+    ├── integration/test_ranker_training.py
     ├── integration/test_ranking_features.py
     ├── integration/test_retrieval_evaluation.py
     ├── integration/test_sparse_retrieval.py
@@ -480,6 +515,7 @@ ecommerce_market_ranker/
         ├── test_hybrid.py
         ├── test_metrics.py
         ├── test_query_parser.py
+        ├── test_training_population.py
         └── test_esci_raw.py
 ```
 

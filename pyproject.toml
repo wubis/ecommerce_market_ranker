@@ -22,6 +22,7 @@ classifiers = [
 ]
 dependencies = [
   "faiss-cpu>=1.14,<2",
+  "lightgbm>=4.7,<5",
   "numpy>=2,<3",
   "polars>=1.32,<2",
   "pydantic>=2.11,<3",

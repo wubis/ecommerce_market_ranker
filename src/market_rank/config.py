@@ -217,6 +217,44 @@ class RankingFeatureConfig(_StrictModel):
         return self
 
 
+class RankerTrainingConfig(_StrictModel):
+    """Deterministic, CPU-bounded pointwise and LambdaMART training controls."""
+
+    component_version: Literal["lightgbm-rankers-v1"] = "lightgbm-rankers-v1"
+    population_version: Literal["training-population-v1"] = "training-population-v1"
+    pointwise_objective: Literal["regression_l2"] = "regression_l2"
+    lambdamart_objective: Literal["lambdarank"] = "lambdarank"
+    learning_rate: float = Field(default=0.05, strict=True, gt=0.0, le=1.0)
+    num_leaves: int = Field(default=31, strict=True, ge=2, le=255)
+    max_depth: int = Field(default=-1, strict=True, ge=-1, le=32)
+    min_data_in_leaf: int = Field(default=20, strict=True, ge=1, le=10000)
+    max_bin: int = Field(default=63, strict=True, ge=16, le=255)
+    lambda_l1: float = Field(default=0.0, strict=True, ge=0.0, le=100.0)
+    lambda_l2: float = Field(default=1.0, strict=True, ge=0.0, le=100.0)
+    max_boost_rounds: int = Field(default=300, strict=True, ge=10, le=5000)
+    early_stopping_rounds: int = Field(default=30, strict=True, ge=1, le=500)
+    ndcg_eval_at: tuple[int, ...] = (10, 20)
+    min_group_rows: int = Field(default=2, strict=True, ge=2, le=1000)
+    min_distinct_labels: int = Field(default=2, strict=True, ge=2, le=4)
+    max_train_rows: int = Field(default=500000, strict=True, ge=1, le=1000000)
+    max_validation_rows: int = Field(default=200000, strict=True, ge=1, le=500000)
+    reload_parity_rows: int = Field(default=128, strict=True, ge=1, le=10000)
+    explanation_rows: int = Field(default=64, strict=True, ge=1, le=1000)
+
+    @model_validator(mode="after")
+    def validate_training(self) -> Self:
+        if self.early_stopping_rounds >= self.max_boost_rounds:
+            raise ValueError("early stopping rounds must be smaller than maximum boost rounds")
+        if not self.ndcg_eval_at or any(
+            not isinstance(cutoff, int) or isinstance(cutoff, bool) or cutoff < 1
+            for cutoff in self.ndcg_eval_at
+        ):
+            raise ValueError("ranker NDCG cutoffs must be positive integers")
+        if self.ndcg_eval_at != tuple(sorted(set(self.ndcg_eval_at))):
+            raise ValueError("ranker NDCG cutoffs must be unique and sorted")
+        return self
+
+
 class LoggingConfig(_StrictModel):
     """Safe local logging defaults."""
 
@@ -237,6 +275,7 @@ class AppConfig(_StrictModel):
     evaluation: EvaluationConfig = EvaluationConfig()
     query_understanding: QueryUnderstandingConfig = QueryUnderstandingConfig()
     ranking_features: RankingFeatureConfig = RankingFeatureConfig()
+    ranker_training: RankerTrainingConfig = RankerTrainingConfig()
     logging: LoggingConfig = LoggingConfig()
 
     @model_validator(mode="after")
@@ -421,6 +460,7 @@ __all__ = [
     "PathsConfig",
     "ProjectConfig",
     "QueryUnderstandingConfig",
+    "RankerTrainingConfig",
     "RankingFeatureConfig",
     "ResolvedConfig",
     "RetrievalConfig",

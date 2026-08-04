@@ -198,6 +198,38 @@ def test_feature_row_bound_must_cover_hybrid_union() -> None:
         )
 
 
+def test_ranker_defaults_are_deterministic_cpu_bounded_and_validation_stopped() -> None:
+    ranker = load_config([BASE_CONFIG]).config.ranker_training
+
+    assert ranker.component_version == "lightgbm-rankers-v1"
+    assert ranker.pointwise_objective == "regression_l2"
+    assert ranker.lambdamart_objective == "lambdarank"
+    assert ranker.max_boost_rounds == 300
+    assert ranker.early_stopping_rounds == 30
+    assert ranker.ndcg_eval_at == (10, 20)
+    assert ranker.max_train_rows == 500000
+    assert ranker.max_validation_rows == 200000
+
+
+def test_ranker_early_stopping_must_precede_maximum_rounds() -> None:
+    with pytest.raises(ConfigValidationError, match="early stopping"):
+        load_config(
+            [BASE_CONFIG],
+            overrides={
+                "ranker_training.max_boost_rounds": 30,
+                "ranker_training.early_stopping_rounds": 30,
+            },
+        )
+
+
+def test_ranker_ndcg_cutoffs_must_be_unique_sorted_positive_integers() -> None:
+    with pytest.raises(ConfigValidationError, match="NDCG cutoffs"):
+        load_config(
+            [BASE_CONFIG],
+            overrides={"ranker_training.ndcg_eval_at": [20, 10, 10]},
+        )
+
+
 @pytest.mark.parametrize(
     "content",
     [

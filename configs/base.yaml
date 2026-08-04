@@ -75,6 +75,27 @@ ranking_features:
   query_batch_size: 64
   parity_fixture_rows: 128
   max_rows_per_query: 200
+ranker_training:
+  component_version: lightgbm-rankers-v1
+  population_version: training-population-v1
+  pointwise_objective: regression_l2
+  lambdamart_objective: lambdarank
+  learning_rate: 0.05
+  num_leaves: 31
+  max_depth: -1
+  min_data_in_leaf: 20
+  max_bin: 63
+  lambda_l1: 0.0
+  lambda_l2: 1.0
+  max_boost_rounds: 300
+  early_stopping_rounds: 30
+  ndcg_eval_at: [10, 20]
+  min_group_rows: 2
+  min_distinct_labels: 2
+  max_train_rows: 500000
+  max_validation_rows: 200000
+  reload_parity_rows: 128
+  explanation_rows: 64
 logging:
   level: INFO
   format: json

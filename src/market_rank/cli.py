@@ -19,6 +19,7 @@ from market_rank.evaluation.retrieval import (
     build_retrieval_evaluation,
 )
 from market_rank.features.artifact import RankingFeatureError, build_ranking_features
+from market_rank.ranking.training import RankingTrainingError, build_rankers
 from market_rank.retrieval.dense import (
     DenseRetrievalError,
     build_dense_index,
@@ -202,6 +203,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="feature profile; defaults to evaluation.default_profile",
     )
     build_features_parser.add_argument(
+        "--code-revision",
+        default=None,
+        help="explicit lineage revision when Git discovery is unavailable",
+    )
+    ranking_parser = command_parsers.add_parser(
+        "ranking", help="grouped supervised ranking-model lifecycle commands"
+    )
+    ranking_commands = ranking_parser.add_subparsers(dest="ranking_command", required=True)
+    train_rankers_parser = ranking_commands.add_parser(
+        "train",
+        help="train identical-population pointwise LightGBM and LambdaMART models",
+    )
+    train_rankers_parser.add_argument("--manifest", type=Path, default=DEFAULT_ESCI_MANIFEST)
+    train_rankers_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    train_rankers_parser.add_argument(
+        "--profile",
+        choices=("development", "portfolio"),
+        default=None,
+        help="training profile; defaults to evaluation.default_profile",
+    )
+    train_rankers_parser.add_argument(
         "--code-revision",
         default=None,
         help="explicit lineage revision when Git discovery is unavailable",
@@ -416,6 +438,38 @@ def _run_build_ranking_features(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _run_train_rankers(arguments: argparse.Namespace) -> int:
+    config = load_config([arguments.config])
+    release = load_release_manifest(arguments.manifest)
+    result = build_rankers(
+        release,
+        config,
+        code_revision=_resolve_code_revision(arguments, arguments.config),
+        profile=arguments.profile,
+    )
+    manifest = result.manifest
+    population = manifest.population
+    print(
+        f"training population: {manifest.profile}, "
+        f"{population.train.eligible_query_groups}/{population.train.eligible_rows} "
+        "train groups/rows, "
+        f"{population.validation.eligible_query_groups}/"
+        f"{population.validation.eligible_rows} validation groups/rows"
+    )
+    for model in manifest.models:
+        metrics = ", ".join(
+            f"NDCG@{cutoff}={value:.4f}" for cutoff, value in model.validation_best_ndcg
+        )
+        print(f"{model.model_id}: iteration {model.best_iteration}; validation {metrics}")
+    print(
+        f"resource: peak RSS {manifest.resource.peak_rss_bytes}/"
+        f"{manifest.resource.rss_limit_bytes} bytes"
+    )
+    status = "reused" if result.reused else "published"
+    print(f"{status} ranking models: {result.artifact.manifest.artifact_id}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run one explicit CLI command and return a bounded process exit code."""
     parser = build_parser()
@@ -437,6 +491,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_evaluate_hybrid(arguments)
         if arguments.command == "features" and arguments.feature_command == "build-ranking":
             return _run_build_ranking_features(arguments)
+        if arguments.command == "ranking" and arguments.ranking_command == "train":
+            return _run_train_rankers(arguments)
     except RawDataValidationError as exc:
         print(
             f"error: raw ESCI validation failed ({_failed_check_count(exc)} checks failed)",
@@ -451,6 +507,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ProfileBuildError,
         RawDataError,
         RankingFeatureError,
+        RankingTrainingError,
         RetrievalEvaluationError,
         SparseRetrievalError,
         ValueError,
