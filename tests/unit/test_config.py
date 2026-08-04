@@ -242,6 +242,51 @@ def test_ranking_evaluation_defaults_quarantine_test_and_bound_populations() -> 
     assert ranking.max_candidate_rows == 200000
 
 
+def test_serving_defaults_are_local_explicit_and_m3_bounded() -> None:
+    serving = load_config([BASE_CONFIG]).config.serving
+
+    assert serving.component_version == "serving-bundle-v1"
+    assert serving.bind_host == "127.0.0.1"
+    assert serving.default_top_k == 10
+    assert serving.max_response_top_k == 50
+    assert serving.default_deadline_ms == 1000
+    assert serving.max_deadline_ms == 3000
+    assert serving.max_concurrency == 2
+    assert serving.allow_degraded_retrieval
+    assert serving.allow_ranker_fallback
+
+
+@pytest.mark.parametrize(
+    "overrides,match",
+    [
+        (
+            {"serving.default_top_k": 51, "serving.max_response_top_k": 50},
+            "default_top_k",
+        ),
+        (
+            {"serving.default_deadline_ms": 3001, "serving.max_deadline_ms": 3000},
+            "default deadline",
+        ),
+        (
+            {"serving.max_debug_candidates": 21, "serving.max_response_top_k": 20},
+            "debug candidate",
+        ),
+        (
+            {
+                "serving.max_response_top_k": 51,
+                "retrieval.hybrid.union_top_k": 50,
+                "ranking_features.max_rows_per_query": 50,
+                "evaluation.cutoffs": [10],
+            },
+            "response top-K",
+        ),
+    ],
+)
+def test_serving_bounds_are_cross_validated(overrides: dict[str, object], match: str) -> None:
+    with pytest.raises(ConfigValidationError, match=match):
+        load_config([BASE_CONFIG], overrides=overrides)
+
+
 @pytest.mark.parametrize(
     "key,value",
     [

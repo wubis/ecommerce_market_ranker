@@ -285,6 +285,36 @@ class RankingEvaluationConfig(_StrictModel):
         return self
 
 
+class ServingConfig(_StrictModel):
+    """Explicit-bundle, local-only, bounded FastAPI serving controls."""
+
+    component_version: Literal["serving-bundle-v1"] = "serving-bundle-v1"
+    bind_host: Literal["127.0.0.1"] = "127.0.0.1"
+    port: int = Field(default=8000, strict=True, ge=1024, le=65535)
+    default_top_k: int = Field(default=10, strict=True, ge=1, le=50)
+    max_response_top_k: int = Field(default=50, strict=True, ge=1, le=100)
+    default_deadline_ms: int = Field(default=1000, strict=True, ge=100, le=10000)
+    max_deadline_ms: int = Field(default=3000, strict=True, ge=100, le=30000)
+    max_concurrency: int = Field(default=2, strict=True, ge=1, le=16)
+    max_request_body_bytes: int = Field(default=16384, strict=True, ge=1024, le=1048576)
+    max_debug_candidates: int = Field(default=20, strict=True, ge=1, le=50)
+    description_snippet_chars: int = Field(default=240, strict=True, ge=32, le=1000)
+    product_store_batch_rows: int = Field(default=10000, strict=True, ge=100, le=100000)
+    allow_degraded_retrieval: bool = Field(default=True, strict=True)
+    allow_ranker_fallback: bool = Field(default=True, strict=True)
+    debug_enabled: bool = Field(default=True, strict=True)
+
+    @model_validator(mode="after")
+    def validate_serving(self) -> Self:
+        if self.default_top_k > self.max_response_top_k:
+            raise ValueError("serving default_top_k must not exceed max_response_top_k")
+        if self.default_deadline_ms > self.max_deadline_ms:
+            raise ValueError("serving default deadline must not exceed maximum deadline")
+        if self.max_debug_candidates > self.max_response_top_k:
+            raise ValueError("serving debug candidate bound exceeds response top-K")
+        return self
+
+
 class LoggingConfig(_StrictModel):
     """Safe local logging defaults."""
 
@@ -307,6 +337,7 @@ class AppConfig(_StrictModel):
     ranking_features: RankingFeatureConfig = RankingFeatureConfig()
     ranker_training: RankerTrainingConfig = RankerTrainingConfig()
     ranking_evaluation: RankingEvaluationConfig = RankingEvaluationConfig()
+    serving: ServingConfig = ServingConfig()
     logging: LoggingConfig = LoggingConfig()
 
     @model_validator(mode="after")
@@ -320,6 +351,8 @@ class AppConfig(_StrictModel):
             raise ValueError("evaluation cutoffs exceed a configured retrieval depth")
         if self.ranking_features.max_rows_per_query < self.retrieval.hybrid.union_top_k:
             raise ValueError("ranking feature row bound is smaller than the hybrid union depth")
+        if self.serving.max_response_top_k > self.retrieval.hybrid.union_top_k:
+            raise ValueError("serving response top-K exceeds the hybrid union depth")
         return self
 
 
@@ -497,6 +530,7 @@ __all__ = [
     "ResolvedConfig",
     "RetrievalConfig",
     "RuntimeConfig",
+    "ServingConfig",
     "SparseRetrievalConfig",
     "load_config",
 ]

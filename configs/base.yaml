@@ -107,6 +107,22 @@ ranking_evaluation:
   failure_analysis_queries: 20
   max_closed_rows: 200000
   max_candidate_rows: 200000
+serving:
+  component_version: serving-bundle-v1
+  bind_host: 127.0.0.1
+  port: 8000
+  default_top_k: 10
+  max_response_top_k: 50
+  default_deadline_ms: 1000
+  max_deadline_ms: 3000
+  max_concurrency: 2
+  max_request_body_bytes: 16384
+  max_debug_candidates: 20
+  description_snippet_chars: 240
+  product_store_batch_rows: 10000
+  allow_degraded_retrieval: true
+  allow_ranker_fallback: true
+  debug_enabled: true
 logging:
   level: INFO
   format: json

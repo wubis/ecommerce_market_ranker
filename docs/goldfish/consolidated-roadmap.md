@@ -14,17 +14,17 @@ tested, documented, reproducible, and independently reviewable.
 
 | Scope | Target |
 |---|---:|
-| Current implemented sequence | Through Goldfish 012 |
+| Current implemented sequence | Through Goldfish 013 |
 | Core portfolio-ready project | Goldfish 016 |
-| Remaining core Goldfishes | Approximately 4 |
+| Remaining core Goldfishes | Approximately 3 |
 | Optional neural and diversity extensions | Goldfish 017–018 |
 
 Goldfish 004A is an additional completed extension even though it does not advance the primary
 integer numbering. The recommended plan therefore concerns the remaining numbered stages and
 does not attempt to renumber prior work.
 
-The expanded plan targeted roughly ten subsystem-sized stages beginning with Goldfish 007. Six
-of those stages are now implemented and four core stages remain. That sizing keeps dense
+The expanded plan targeted roughly ten subsystem-sized stages beginning with Goldfish 007. Seven
+of those stages are now implemented and three core stages remain. That sizing keeps dense
 retrieval, features, training, evaluation, serving, demo, and qualification independently
 reviewable without returning to the earlier fragmentation.
 
@@ -79,6 +79,8 @@ bootstrap intervals, slices and failure analysis, protocol identifiers, experime
 and validation-only champion selection with one promoted active-relevance contract.
 
 ### Goldfish 013 — Serving Bundle, Orchestration, and FastAPI
+
+**Status: Implemented.**
 
 Promote an explicit compatible relevance bundle, implement the online search orchestrator,
 load persisted assets without rebuilding or downloading, expose validated FastAPI contracts,

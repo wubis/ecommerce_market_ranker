@@ -22,12 +22,14 @@ classifiers = [
 ]
 dependencies = [
   "faiss-cpu>=1.14,<2",
+  "fastapi>=0.139,<0.140",
   "lightgbm>=4.7,<5",
   "numpy>=2,<3",
   "polars>=1.32,<2",
   "pydantic>=2.11,<3",
   "pyyaml>=6,<7",
   "sentence-transformers>=5.6,<6",
+  "uvicorn>=0.51,<0.52",
 ]
 
 [project.scripts]
@@ -35,6 +37,7 @@ market-rank = "market_rank.cli:main"
 
 [dependency-groups]
 dev = [
+  "httpx2>=2.9,<3",
   "mypy>=1.15,<2",
   "pre-commit>=4,<5",
   "pytest>=8,<10",

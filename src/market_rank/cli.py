@@ -27,6 +27,9 @@ from market_rank.retrieval.dense import (
     cache_dense_model,
 )
 from market_rank.retrieval.sparse import SparseRetrievalError, build_sparse_index
+from market_rank.serving.api import create_app
+from market_rank.serving.bundle import ServingBundleError, build_serving_bundle
+from market_rank.serving.orchestrator import ServingRuntimeError
 
 DEFAULT_ESCI_MANIFEST = Path("configs/data/esci-release-7916cdf6ab75.json")
 DEFAULT_CONFIG = Path("configs/base.yaml")
@@ -246,6 +249,31 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="explicit lineage revision when Git discovery is unavailable",
     )
+    serving_parser = command_parsers.add_parser(
+        "serving", help="explicit relevance-bundle promotion and local API commands"
+    )
+    serving_commands = serving_parser.add_subparsers(dest="serving_command", required=True)
+    promote_parser = serving_commands.add_parser(
+        "promote", help="promote compatible Goldfish 006-012 artifacts into one serving bundle"
+    )
+    promote_parser.add_argument("--manifest", type=Path, default=DEFAULT_ESCI_MANIFEST)
+    promote_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    promote_parser.add_argument(
+        "--profile",
+        choices=("development", "portfolio"),
+        default=None,
+        help="bundle profile; defaults to evaluation.default_profile",
+    )
+    promote_parser.add_argument(
+        "--code-revision",
+        default=None,
+        help="explicit lineage revision when Git discovery is unavailable",
+    )
+    run_parser = serving_commands.add_parser(
+        "run", help="run the local API from one explicit immutable bundle ID"
+    )
+    run_parser.add_argument("--bundle-id", required=True)
+    run_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     return parser
 
 
@@ -518,6 +546,42 @@ def _run_evaluate_rankers(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _run_promote_serving(arguments: argparse.Namespace) -> int:
+    config = load_config([arguments.config])
+    release = load_release_manifest(arguments.manifest)
+    result = build_serving_bundle(
+        release,
+        config,
+        code_revision=_resolve_code_revision(arguments, arguments.config),
+        profile=arguments.profile,
+    )
+    print(
+        f"serving bundle: {result.manifest.product_count} products, "
+        f"active stage {result.manifest.active_relevance.selected_stage}"
+    )
+    print(
+        f"resource: peak RSS {result.manifest.resource.peak_rss_bytes}/"
+        f"{result.manifest.resource.rss_limit_bytes} bytes"
+    )
+    status_text = "reused" if result.reused else "published"
+    print(f"{status_text} serving bundle: {result.artifact.manifest.artifact_id}")
+    return 0
+
+
+def _run_serving_api(arguments: argparse.Namespace) -> int:
+    import uvicorn
+
+    config = load_config([arguments.config])
+    app = create_app(config, str(arguments.bundle_id))
+    uvicorn.run(
+        app,
+        host=config.config.serving.bind_host,
+        port=config.config.serving.port,
+        workers=1,
+    )
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run one explicit CLI command and return a bounded process exit code."""
     parser = build_parser()
@@ -543,6 +607,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_train_rankers(arguments)
         if arguments.command == "ranking" and arguments.ranking_command == "evaluate":
             return _run_evaluate_rankers(arguments)
+        if arguments.command == "serving" and arguments.serving_command == "promote":
+            return _run_promote_serving(arguments)
+        if arguments.command == "serving" and arguments.serving_command == "run":
+            return _run_serving_api(arguments)
     except RawDataValidationError as exc:
         print(
             f"error: raw ESCI validation failed ({_failed_check_count(exc)} checks failed)",
@@ -560,6 +628,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         RankingEvaluationError,
         RankingTrainingError,
         RetrievalEvaluationError,
+        ServingBundleError,
+        ServingRuntimeError,
         SparseRetrievalError,
         ValueError,
     ) as exc:

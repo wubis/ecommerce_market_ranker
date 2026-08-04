@@ -4,7 +4,7 @@ MarketRank is a planned CPU-first, multi-stage e-commerce search and ranking sys
 around the public Amazon ESCI Task 1 relevance judgments. The authoritative architecture is
 defined in [ELEPHANT.md](ELEPHANT.md).
 
-This repository has completed **Goldfish 012**: environment/tooling, reproducible ESCI data
+This repository has completed **Goldfish 013**: environment/tooling, reproducible ESCI data
 foundations, persisted fixed-catalog BM25 retrieval, protocol-safe metric primitives, and a
 checkpointed MiniLM/FAISS dense retriever. Deterministic RRF fusion now produces partitioned
 fixed-cohort retrieval reports with grouped confidence intervals, slices, paired comparisons,
@@ -15,8 +15,11 @@ persist directly comparable pointwise LightGBM and LambdaMART models with valida
 stopping, reload parity, explanation evidence, and a resource gate. Protocol-separated
 closed-pool and end-to-end validation reports now provide grouped intervals, slices, ABL-01–05
 evidence, failure analysis, experiment lineage, and deterministic champion selection. Exactly
-one active-relevance contract is promoted without consulting project test. Serving and demo
-logic remain intentionally absent.
+one active-relevance contract is promoted without consulting project test. An explicit immutable
+serving bundle now packages verified retrieval/model lineage and a safe indexed product
+projection. The offline runtime exposes bounded search through validated FastAPI contracts with
+readiness and degraded fallbacks. Streamlit and final local qualification remain intentionally
+absent.
 
 ## Reference environment
 
@@ -441,6 +444,31 @@ stage remains active. The immutable contract records one complete score/rank con
 fallback, while project test remains unmaterialized. See
 [`docs/goldfish/012-ranking-evaluation-champion-selection.md`](docs/goldfish/012-ranking-evaluation-champion-selection.md).
 
+## Promote and serve one explicit relevance bundle
+
+After compatible Goldfish 006–012 portfolio artifacts exist, promote the offline serving
+coordinates and indexed product projection:
+
+```bash
+uv run market-rank serving promote --profile portfolio
+```
+
+The command prints the immutable bundle ID. Start the local API with that complete ID:
+
+```bash
+uv run market-rank serving run --bundle-id \
+  serving-bundle/<dataset-version>/portfolio/serving-bundle-v1/<config-sha256>
+```
+
+Startup binds to `127.0.0.1:8000`, verifies local persisted assets, and never builds or
+downloads. The API exposes `/health/live`, `/health/ready`, `/v1/search`, `/v1/model-info`,
+`/v1/artifact-info`, and the bounded local `/v1/debug/explain`. Search mode defaults to
+`active`, which resolves the exact Goldfish 012 champion; explicit `bm25`, `dense`, `hybrid`,
+`pointwise`, and `lambdamart` modes support controlled comparisons. One unavailable retriever
+degrades to the other source, while model failure restores RRF and two unavailable retrievers
+block readiness. See
+[`docs/goldfish/013-serving-bundle-fastapi.md`](docs/goldfish/013-serving-bundle-fastapi.md).
+
 ## Download and offline boundary
 
 Internet access is allowed only during explicit setup operations:
@@ -495,6 +523,7 @@ ecommerce_market_ranker/
 ├── docs/goldfish/010-query-understanding-ranking-features.md
 ├── docs/goldfish/011-pointwise-lambdamart-rankers.md
 ├── docs/goldfish/012-ranking-evaluation-champion-selection.md
+├── docs/goldfish/013-serving-bundle-fastapi.md
 ├── docs/goldfish/consolidated-roadmap.md
 ├── src/market_rank/
 │   ├── __init__.py
@@ -524,11 +553,16 @@ ecommerce_market_ranker/
 │   │   ├── __init__.py
 │   │   ├── population.py
 │   │   └── training.py
-│   └── retrieval/
+│   ├── retrieval/
+│   │   ├── __init__.py
+│   │   ├── dense.py
+│   │   ├── hybrid.py
+│   │   └── sparse.py
+│   └── serving/
 │       ├── __init__.py
-│       ├── dense.py
-│       ├── hybrid.py
-│       └── sparse.py
+│       ├── api.py
+│       ├── bundle.py
+│       └── orchestrator.py
 └── tests/
     ├── integration/test_dense_retrieval.py
     ├── integration/test_esci_foundation.py
@@ -537,6 +571,7 @@ ecommerce_market_ranker/
     ├── integration/test_ranking_features.py
     ├── integration/test_retrieval_evaluation.py
     ├── integration/test_sparse_retrieval.py
+    ├── integration/test_serving.py
     ├── smoke/test_import.py
     └── unit/
         ├── test_artifacts.py
