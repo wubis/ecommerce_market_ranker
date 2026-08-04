@@ -19,3 +19,17 @@ def test_qualification_imports_in_a_fresh_process_without_cycles() -> None:
         text=True,
     )
     assert completed.returncode == 0, completed.stderr
+
+
+def test_cli_import_does_not_eagerly_load_lightgbm() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import market_rank.cli; assert 'lightgbm' not in sys.modules",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr

@@ -3,40 +3,28 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
-from market_rank.artifacts import ArtifactError
-from market_rank.config import ConfigError, load_config
+from market_rank.config import load_config
 from market_rank.data.download import DownloadPolicy, download_validate_esci
 from market_rank.data.esci_raw import RawDataError, RawDataValidationError, load_release_manifest
-from market_rank.data.foundation import DataFoundationError, build_esci_foundation
-from market_rank.data.profiles import ProfileBuildError, build_esci_profiles
-from market_rank.demo.client import DemoApiClient, DemoClientError
-from market_rank.evaluation.ranking import RankingEvaluationError, build_ranking_evaluation
+from market_rank.data.foundation import build_esci_foundation
+from market_rank.data.profiles import build_esci_profiles
+from market_rank.demo.client import DemoApiClient
 from market_rank.evaluation.retrieval import (
-    RetrievalEvaluationError,
     build_retrieval_evaluation,
 )
-from market_rank.features.artifact import RankingFeatureError, build_ranking_features
-from market_rank.portfolio import (
-    PortfolioError,
-    build_portfolio_release,
-    verify_clean_reproduction,
-)
-from market_rank.qualification import QualificationError, build_release_qualification
-from market_rank.ranking.training import RankingTrainingError, build_rankers
+from market_rank.features.artifact import build_ranking_features
 from market_rank.retrieval.dense import (
-    DenseRetrievalError,
     build_dense_index,
     cache_dense_model,
 )
-from market_rank.retrieval.sparse import SparseRetrievalError, build_sparse_index
-from market_rank.serving.api import create_app
-from market_rank.serving.bundle import ServingBundleError, build_serving_bundle
-from market_rank.serving.orchestrator import ServingRuntimeError
+from market_rank.retrieval.sparse import build_sparse_index
 
 DEFAULT_ESCI_MANIFEST = Path("configs/data/esci-release-7916cdf6ab75.json")
 DEFAULT_CONFIG = Path("configs/base.yaml")
@@ -48,6 +36,60 @@ class CodeRevisionError(RawDataError):
 
 class DemoLaunchError(RuntimeError):
     """Raised when the local Streamlit process cannot be launched cleanly."""
+
+
+class CommandExecutionError(RuntimeError):
+    """Raised when a lazily imported lifecycle component rejects a command."""
+
+
+def _prime_torch_runtime() -> None:
+    """Load PyTorch before LightGBM on macOS processes that need both runtimes."""
+    try:
+        importlib.import_module("torch")
+    except ImportError as exc:
+        raise CommandExecutionError(f"PyTorch is unavailable: {exc}") from exc
+
+
+def build_rankers(*args: Any, **kwargs: Any) -> Any:
+    from market_rank.ranking.training import build_rankers as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def build_ranking_evaluation(*args: Any, **kwargs: Any) -> Any:
+    from market_rank.evaluation.ranking import build_ranking_evaluation as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def build_serving_bundle(*args: Any, **kwargs: Any) -> Any:
+    from market_rank.serving.bundle import build_serving_bundle as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def create_app(*args: Any, **kwargs: Any) -> Any:
+    from market_rank.serving.api import create_app as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def build_release_qualification(*args: Any, **kwargs: Any) -> Any:
+    from market_rank.qualification import build_release_qualification as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def verify_clean_reproduction(*args: Any, **kwargs: Any) -> Any:
+    from market_rank.portfolio import verify_clean_reproduction as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def build_portfolio_release(*args: Any, **kwargs: Any) -> Any:
+    from market_rank.portfolio import build_portfolio_release as implementation
+
+    return implementation(*args, **kwargs)
 
 
 def _find_repository_root(start: Path) -> Path:
@@ -637,6 +679,7 @@ def _run_promote_serving(arguments: argparse.Namespace) -> int:
 def _run_serving_api(arguments: argparse.Namespace) -> int:
     import uvicorn
 
+    _prime_torch_runtime()
     config = load_config([arguments.config])
     app = create_app(config, str(arguments.bundle_id))
     uvicorn.run(
@@ -690,6 +733,7 @@ def _run_demo(arguments: argparse.Namespace) -> int:
 
 
 def _run_qualification(arguments: argparse.Namespace) -> int:
+    _prime_torch_runtime()
     config = load_config([arguments.config])
     result = build_release_qualification(
         config,
@@ -725,6 +769,7 @@ def _run_portfolio_verify(arguments: argparse.Namespace) -> int:
 
 
 def _run_portfolio_finalize(arguments: argparse.Namespace) -> int:
+    _prime_torch_runtime()
     config = load_config([arguments.config])
     result = build_portfolio_release(
         config,
@@ -792,26 +837,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
-    except (
-        ArtifactError,
-        ConfigError,
-        DataFoundationError,
-        DenseRetrievalError,
-        DemoClientError,
-        DemoLaunchError,
-        ProfileBuildError,
-        PortfolioError,
-        QualificationError,
-        RawDataError,
-        RankingFeatureError,
-        RankingEvaluationError,
-        RankingTrainingError,
-        RetrievalEvaluationError,
-        ServingBundleError,
-        ServingRuntimeError,
-        SparseRetrievalError,
-        ValueError,
-    ) as exc:
+    except (RuntimeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
