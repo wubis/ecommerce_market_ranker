@@ -208,7 +208,7 @@ def test_fastapi_contracts_readiness_validation_and_no_path_disclosure(tmp_path:
         prepared[2], bundle.artifact.manifest.artifact_id, prepared[1], encoder=HashEncoder()
     )
     app = create_app(prepared[1], bundle.artifact.manifest.artifact_id, runtime=runtime)
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         assert client.get("/health/live").json() == {"status": "live"}
         ready = client.get("/health/ready")
         assert ready.status_code == 200
@@ -225,6 +225,9 @@ def test_fastapi_contracts_readiness_validation_and_no_path_disclosure(tmp_path:
         assert artifact_info.status_code == 200
         assert str(tmp_path) not in artifact_info.text
         assert client.get("/v1/model-info").status_code == 200
+        hostile_host = client.get("/health/live", headers={"Host": "attacker.example"})
+        assert hostile_host.status_code == 400
+        assert str(tmp_path) not in hostile_host.text
         oversized = "x" * prepared[1].config.serving.max_request_body_bytes
         assert (
             client.post("/v1/search", json={"query": "mouse", "padding": oversized}).status_code
@@ -233,7 +236,7 @@ def test_fastapi_contracts_readiness_validation_and_no_path_disclosure(tmp_path:
     runtime.close()
 
     unavailable = create_app(prepared[1], "serving-bundle/missing/explicit/id")
-    with TestClient(unavailable) as client:
+    with TestClient(unavailable, base_url="http://127.0.0.1") as client:
         assert client.get("/health/live").status_code == 200
         assert client.get("/health/ready").status_code == 503
         assert client.post("/v1/search", json={"query": "mouse"}).status_code == 503

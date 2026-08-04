@@ -21,6 +21,7 @@ from market_rank.evaluation.retrieval import (
     build_retrieval_evaluation,
 )
 from market_rank.features.artifact import RankingFeatureError, build_ranking_features
+from market_rank.qualification import QualificationError, build_release_qualification
 from market_rank.ranking.training import RankingTrainingError, build_rankers
 from market_rank.retrieval.dense import (
     DenseRetrievalError,
@@ -289,6 +290,27 @@ def build_parser() -> argparse.ArgumentParser:
     check_demo_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     run_demo_parser = demo_commands.add_parser("run", help="launch the thin local Streamlit client")
     run_demo_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    qualification_parser = command_parsers.add_parser(
+        "qualification", help="fail-closed local release-qualification commands"
+    )
+    qualification_commands = qualification_parser.add_subparsers(
+        dest="qualification_command", required=True
+    )
+    run_qualification_parser = qualification_commands.add_parser(
+        "run", help="qualify one explicit serving bundle on the reference host"
+    )
+    run_qualification_parser.add_argument("--bundle-id", required=True)
+    run_qualification_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    run_qualification_parser.add_argument(
+        "--background-conditions",
+        required=True,
+        help="short operator record of power/background benchmark conditions",
+    )
+    run_qualification_parser.add_argument(
+        "--code-revision",
+        default=None,
+        help="explicit lineage revision when Git discovery is unavailable",
+    )
     return parser
 
 
@@ -638,6 +660,28 @@ def _run_demo(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _run_qualification(arguments: argparse.Namespace) -> int:
+    config = load_config([arguments.config])
+    result = build_release_qualification(
+        config,
+        str(arguments.bundle_id),
+        code_revision=_resolve_code_revision(arguments, arguments.config),
+        background_conditions=str(arguments.background_conditions),
+    )
+    report = result.report
+    mode_summary = ", ".join(
+        f"{item.mode} p95={item.latency.p95_ms:.3f}ms" for item in report.mode_latencies
+    )
+    print(f"release qualification: pass; {mode_summary}")
+    print(
+        f"startup {report.startup_ms:.3f}ms; peak RSS "
+        f"{report.peak_rss_bytes}/{report.rss_limit_bytes} bytes"
+    )
+    status = "reused" if result.reused else "published"
+    print(f"{status} release qualification: {result.artifact.manifest.artifact_id}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run one explicit CLI command and return a bounded process exit code."""
     parser = build_parser()
@@ -671,6 +715,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_demo_check(arguments)
         if arguments.command == "demo" and arguments.demo_command == "run":
             return _run_demo(arguments)
+        if arguments.command == "qualification" and arguments.qualification_command == "run":
+            return _run_qualification(arguments)
     except RawDataValidationError as exc:
         print(
             f"error: raw ESCI validation failed ({_failed_check_count(exc)} checks failed)",
@@ -685,6 +731,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         DemoClientError,
         DemoLaunchError,
         ProfileBuildError,
+        QualificationError,
         RawDataError,
         RankingFeatureError,
         RankingEvaluationError,

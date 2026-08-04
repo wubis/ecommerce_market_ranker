@@ -322,6 +322,36 @@ def test_demo_configuration_rejects_unbounded_or_ambiguous_values(
         load_config([BASE_CONFIG], overrides=overrides)
 
 
+def test_qualification_defaults_match_reference_machine_and_serving_bounds() -> None:
+    config = load_config([BASE_CONFIG])
+    qualification = config.config.qualification
+
+    assert qualification.required_chip == "Apple M3"
+    assert qualification.required_memory_bytes == 8 * 1024**3
+    assert qualification.top_k <= config.config.serving.max_response_top_k
+    assert qualification.concurrency_workers <= config.config.serving.max_concurrency
+    assert qualification.modes[0] == "active"
+    assert qualification.measured_rounds >= 3
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("qualification.modes", ["active", "active"], "modes"),
+        ("qualification.queries", [" mouse"], "queries"),
+        ("qualification.top_k", 51, "less than or equal"),
+        ("qualification.concurrency_workers", 3, "concurrency"),
+    ],
+)
+def test_invalid_qualification_configuration_is_rejected(
+    key: str,
+    value: object,
+    message: str,
+) -> None:
+    with pytest.raises(ConfigValidationError, match=message):
+        load_config([BASE_CONFIG], overrides={key: value})
+
+
 @pytest.mark.parametrize(
     "key,value",
     [

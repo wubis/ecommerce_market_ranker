@@ -14,17 +14,17 @@ tested, documented, reproducible, and independently reviewable.
 
 | Scope | Target |
 |---|---:|
-| Current implemented sequence | Through Goldfish 014 |
+| Current implemented sequence | Through Goldfish 015 |
 | Core portfolio-ready project | Goldfish 016 |
-| Remaining core Goldfishes | Approximately 2 |
+| Remaining core Goldfishes | Approximately 1 |
 | Optional neural and diversity extensions | Goldfish 017–018 |
 
 Goldfish 004A is an additional completed extension even though it does not advance the primary
 integer numbering. The recommended plan therefore concerns the remaining numbered stages and
 does not attempt to renumber prior work.
 
-The expanded plan targeted roughly ten subsystem-sized stages beginning with Goldfish 007. Eight
-of those stages are now implemented and two core stages remain. That sizing keeps dense
+The expanded plan targeted roughly ten subsystem-sized stages beginning with Goldfish 007. Nine
+of those stages are now implemented and one core stage remains. That sizing keeps dense
 retrieval, features, training, evaluation, serving, demo, and qualification independently
 reviewable without returning to the earlier fragmentation.
 
@@ -96,9 +96,13 @@ reliable local demonstration workflow.
 
 ### Goldfish 015 — Hardening and M3/8 GB Qualification
 
+**Status: Implemented.**
+
 Complete regression, corruption, security, offline-startup, and end-to-end tests; measure local
 latency and peak RSS; resolve resource blockers; document runbooks, recovery, limitations, and
 reproduction; and prepare a release candidate on the reference Apple M3 with 8 GB memory.
+The fail-closed qualification machinery and persisted fixture path are complete; final portfolio
+measurements require the frozen Goldfish 016 bundle and are not yet claimed.
 
 ### Goldfish 016 — Frozen Portfolio Experiments and Final Report
 

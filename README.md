@@ -4,7 +4,7 @@ MarketRank is a planned CPU-first, multi-stage e-commerce search and ranking sys
 around the public Amazon ESCI Task 1 relevance judgments. The authoritative architecture is
 defined in [ELEPHANT.md](ELEPHANT.md).
 
-This repository has completed **Goldfish 014**: environment/tooling, reproducible ESCI data
+This repository has completed **Goldfish 015**: environment/tooling, reproducible ESCI data
 foundations, persisted fixed-catalog BM25 retrieval, protocol-safe metric primitives, and a
 checkpointed MiniLM/FAISS dense retriever. Deterministic RRF fusion now produces partitioned
 fixed-cohort retrieval reports with grouped confidence intervals, slices, paired comparisons,
@@ -20,7 +20,10 @@ serving bundle now packages verified retrieval/model lineage and a safe indexed 
 projection. The offline runtime exposes bounded search through validated FastAPI contracts with
 readiness and degraded fallbacks. A thin localhost-only Streamlit client now compares ranking
 modes with product cards, provenance, rank movement, bounded debug features, latency, lineage,
-and explicit dataset limitations. Final local qualification remains intentionally absent.
+and explicit dataset limitations. A fail-closed release-qualification stage now verifies an
+explicit bundle's offline startup, readiness, six-mode API latency, modest concurrency, peak RSS,
+safe host facts, and immutable lineage on the exact M3/8 GB reference host. The frozen portfolio
+bundle and final qualification measurements remain Goldfish 016 work.
 
 ## Reference environment
 
@@ -488,6 +491,25 @@ feature values. List-composition statistics are presentation diagnostics, not re
 fairness claims. See
 [`docs/goldfish/014-streamlit-portfolio-demo.md`](docs/goldfish/014-streamlit-portfolio-demo.md).
 
+## Qualify a local release candidate
+
+From a clean Git revision and a fresh terminal on the Apple M3/8 GB Mac, run the frozen `rc1`
+workload against one explicit portfolio serving bundle:
+
+```bash
+uv run market-rank qualification run \
+  --bundle-id serving-bundle/<dataset-version>/portfolio/serving-bundle-v1/<config-sha256> \
+  --background-conditions "AC power; all nonessential applications closed"
+```
+
+The stage blocks socket connections, requires AC power and the exact reference hardware, measures
+cold bundle load, all six ranking modes, stage latency, concurrency two, and process peak RSS, and
+promotes evidence only when every gate passes. Failed JSON evidence is retained separately under
+`reports/generated/qualification/failed/`. This repository currently has no production portfolio
+bundle, so it makes no final latency or RSS claim yet. See the
+[`Goldfish 015 design`](docs/goldfish/015-hardening-m3-qualification.md) and
+[`local qualification runbook`](docs/runbooks/local-release-qualification.md).
+
 ## Download and offline boundary
 
 Internet access is allowed only during explicit setup operations:
@@ -544,12 +566,15 @@ ecommerce_market_ranker/
 ├── docs/goldfish/012-ranking-evaluation-champion-selection.md
 ├── docs/goldfish/013-serving-bundle-fastapi.md
 ├── docs/goldfish/014-streamlit-portfolio-demo.md
+├── docs/goldfish/015-hardening-m3-qualification.md
 ├── docs/goldfish/consolidated-roadmap.md
+├── docs/runbooks/local-release-qualification.md
 ├── src/market_rank/
 │   ├── __init__.py
 │   ├── artifacts.py
 │   ├── cli.py
 │   ├── config.py
+│   ├── qualification.py
 │   ├── data/
 │   │   ├── __init__.py
 │   │   ├── download.py
@@ -595,6 +620,7 @@ ecommerce_market_ranker/
     ├── integration/test_ranker_training.py
     ├── integration/test_ranking_evaluation.py
     ├── integration/test_ranking_features.py
+    ├── integration/test_qualification.py
     ├── integration/test_retrieval_evaluation.py
     ├── integration/test_sparse_retrieval.py
     ├── integration/test_serving.py
@@ -610,6 +636,7 @@ ecommerce_market_ranker/
         ├── test_hybrid.py
         ├── test_metrics.py
         ├── test_query_parser.py
+        ├── test_qualification.py
         ├── test_ranking_evaluation.py
         ├── test_training_population.py
         └── test_esci_raw.py

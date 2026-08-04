@@ -138,6 +138,36 @@ demo:
     - iphone 13 case
     - coffee maker
     - blue dress
+qualification:
+  component_version: release-qualification-v1
+  generation: rc1
+  required_system: Darwin
+  required_machine: arm64
+  required_chip: Apple M3
+  required_memory_bytes: 8589934592
+  required_power_source: AC Power
+  require_clean_revision: true
+  warmup_rounds: 2
+  measured_rounds: 5
+  concurrency_workers: 2
+  concurrency_rounds: 3
+  top_k: 10
+  cold_startup_target_ms: 30000.0
+  request_p95_target_ms: 1000.0
+  concurrency_p95_target_ms: 1500.0
+  parse_p95_target_ms: 50.0
+  sparse_p95_target_ms: 200.0
+  dense_p95_target_ms: 200.0
+  fusion_p95_target_ms: 50.0
+  features_p95_target_ms: 250.0
+  ranker_p95_target_ms: 50.0
+  modes: [active, bm25, dense, hybrid, pointwise, lambdamart]
+  queries:
+    - wireless mouse
+    - running shoes men
+    - iphone 13 case
+    - coffee maker
+    - blue dress
 logging:
   level: INFO
   format: json

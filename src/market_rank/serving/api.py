@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from market_rank.artifacts import ArtifactStore
 from market_rank.config import ResolvedConfig
@@ -110,6 +111,10 @@ def create_app(
         docs_url="/docs",
         redoc_url=None,
         lifespan=lifespan,
+    )
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=["127.0.0.1", "localhost", "[::1]"],
     )
 
     @app.middleware("http")

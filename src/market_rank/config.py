@@ -346,6 +346,59 @@ class DemoConfig(_StrictModel):
         return self
 
 
+class QualificationConfig(_StrictModel):
+    """Fail-closed release qualification on the reference Apple host."""
+
+    component_version: Literal["release-qualification-v1"] = "release-qualification-v1"
+    generation: Literal["rc1"] = "rc1"
+    required_system: Literal["Darwin"] = "Darwin"
+    required_machine: Literal["arm64"] = "arm64"
+    required_chip: Literal["Apple M3"] = "Apple M3"
+    required_memory_bytes: int = Field(default=8 * 1024**3, strict=True, ge=1)
+    required_power_source: Literal["AC Power"] = "AC Power"
+    require_clean_revision: bool = Field(default=True, strict=True)
+    warmup_rounds: int = Field(default=2, strict=True, ge=1, le=20)
+    measured_rounds: int = Field(default=5, strict=True, ge=3, le=100)
+    concurrency_workers: int = Field(default=2, strict=True, ge=1, le=4)
+    concurrency_rounds: int = Field(default=3, strict=True, ge=1, le=20)
+    top_k: int = Field(default=10, strict=True, ge=1, le=50)
+    cold_startup_target_ms: float = Field(default=30000.0, strict=True, gt=0.0)
+    request_p95_target_ms: float = Field(default=1000.0, strict=True, gt=0.0)
+    concurrency_p95_target_ms: float = Field(default=1500.0, strict=True, gt=0.0)
+    parse_p95_target_ms: float = Field(default=50.0, strict=True, gt=0.0)
+    sparse_p95_target_ms: float = Field(default=200.0, strict=True, gt=0.0)
+    dense_p95_target_ms: float = Field(default=200.0, strict=True, gt=0.0)
+    fusion_p95_target_ms: float = Field(default=50.0, strict=True, gt=0.0)
+    features_p95_target_ms: float = Field(default=250.0, strict=True, gt=0.0)
+    ranker_p95_target_ms: float = Field(default=50.0, strict=True, gt=0.0)
+    modes: tuple[Literal["active", "bm25", "dense", "hybrid", "pointwise", "lambdamart"], ...] = (
+        "active",
+        "bm25",
+        "dense",
+        "hybrid",
+        "pointwise",
+        "lambdamart",
+    )
+    queries: tuple[str, ...] = (
+        "wireless mouse",
+        "running shoes men",
+        "iphone 13 case",
+        "coffee maker",
+        "blue dress",
+    )
+
+    @model_validator(mode="after")
+    def validate_qualification(self) -> Self:
+        if not self.modes or len(set(self.modes)) != len(self.modes):
+            raise ValueError("qualification modes must be nonempty and unique")
+        normalized = tuple(query.strip() for query in self.queries)
+        if not normalized or any(not query or len(query) > 512 for query in normalized):
+            raise ValueError("qualification queries must be nonempty and at most 512 characters")
+        if normalized != self.queries or len(set(normalized)) != len(normalized):
+            raise ValueError("qualification queries must be stripped and unique")
+        return self
+
+
 class LoggingConfig(_StrictModel):
     """Safe local logging defaults."""
 
@@ -370,6 +423,7 @@ class AppConfig(_StrictModel):
     ranking_evaluation: RankingEvaluationConfig = RankingEvaluationConfig()
     serving: ServingConfig = ServingConfig()
     demo: DemoConfig = DemoConfig()
+    qualification: QualificationConfig = QualificationConfig()
     logging: LoggingConfig = LoggingConfig()
 
     @model_validator(mode="after")
@@ -389,6 +443,10 @@ class AppConfig(_StrictModel):
             raise ValueError("demo default top-K exceeds the serving response bound")
         if self.demo.max_product_cards > self.serving.max_response_top_k:
             raise ValueError("demo product-card bound exceeds the serving response bound")
+        if self.qualification.top_k > self.serving.max_response_top_k:
+            raise ValueError("qualification top-K exceeds the serving response bound")
+        if self.qualification.concurrency_workers > self.serving.max_concurrency:
+            raise ValueError("qualification concurrency exceeds the serving concurrency bound")
         return self
 
 
@@ -560,6 +618,7 @@ __all__ = [
     "LoggingConfig",
     "PathsConfig",
     "ProjectConfig",
+    "QualificationConfig",
     "QueryUnderstandingConfig",
     "RankerTrainingConfig",
     "RankingEvaluationConfig",
