@@ -167,6 +167,37 @@ def test_search_uses_exact_scores_contiguous_ranks_and_product_id_ties(tmp_path:
     assert all(item.latency_ms >= 0.0 for item in candidates)
 
 
+def test_stable_search_only_expands_when_the_cutoff_score_is_tied() -> None:
+    product_ids = tuple(f"p-{ordinal:03d}" for ordinal in range(100))
+    vector = np.zeros(DIMENSION, dtype=np.float32)
+
+    class RecordingIndex:
+        def __init__(self, scores: np.ndarray[tuple[int], np.dtype[np.float32]]) -> None:
+            self.scores = scores
+            self.requests: list[int] = []
+
+        def search(
+            self, query: np.ndarray[tuple[int, int], np.dtype[np.float32]], top_k: int
+        ) -> tuple[
+            np.ndarray[tuple[int, int], np.dtype[np.float32]],
+            np.ndarray[tuple[int, int], np.dtype[np.int64]],
+        ]:
+            assert query.shape == (1, DIMENSION)
+            self.requests.append(top_k)
+            ordinals = np.argsort(-self.scores, stable=True)[:top_k]
+            return self.scores[ordinals].reshape(1, -1), ordinals.reshape(1, -1)
+
+    unique = RecordingIndex(np.arange(100, 0, -1, dtype=np.float32))
+    assert len(dense_module._stable_search(unique, vector, product_ids, 5)) == 5
+    assert unique.requests == [64]
+
+    tied = RecordingIndex(np.ones(100, dtype=np.float32))
+    reversed_product_ids = tuple(reversed(product_ids))
+    result = dense_module._stable_search(tied, vector, reversed_product_ids, 5)
+    assert tied.requests == [64, 100]
+    assert tuple(reversed_product_ids[ordinal] for ordinal, _ in result) == product_ids[:5]
+
+
 def test_empty_query_and_explicit_pair_scoring_are_complete(tmp_path: Path) -> None:
     prepared = _prepare_dense(tmp_path)
     result = _build(prepared)

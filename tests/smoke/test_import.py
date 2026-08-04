@@ -33,3 +33,14 @@ def test_cli_import_does_not_eagerly_load_lightgbm() -> None:
         text=True,
     )
     assert completed.returncode == 0, completed.stderr
+
+
+def test_native_runtime_launcher_reaches_cli_in_a_fresh_process() -> None:
+    completed = subprocess.run(
+        [sys.executable, "-m", "market_rank.launcher", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "usage: market-rank" in completed.stdout

@@ -35,7 +35,7 @@ dependencies = [
 ]
 
 [project.scripts]
-market-rank = "market_rank.cli:main"
+market-rank = "market_rank.launcher:main"
 
 [dependency-groups]
 dev = [

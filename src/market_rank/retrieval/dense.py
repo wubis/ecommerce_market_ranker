@@ -624,16 +624,26 @@ def _stable_search(
     product_ids: tuple[str, ...],
     top_k: int,
 ) -> tuple[tuple[int, float], ...]:
-    scores, ordinals = index.search(vector.reshape(1, -1), len(product_ids))
-    observed = [
-        (int(ordinal), float(score))
-        for ordinal, score in zip(ordinals[0], scores[0], strict=True)
-        if int(ordinal) >= 0
-    ]
-    if len(observed) != len(product_ids) or any(not math.isfinite(score) for _, score in observed):
-        raise DenseIndexValidationError("FAISS returned incomplete or non-finite catalog scores")
-    observed.sort(key=lambda item: (-item[1], product_ids[item[0]]))
-    return tuple(observed[:top_k])
+    catalog_size = len(product_ids)
+    target = min(top_k, catalog_size)
+    requested = min(catalog_size, max(target * 2, 64))
+    while True:
+        scores, ordinals = index.search(vector.reshape(1, -1), requested)
+        observed = [
+            (int(ordinal), float(score))
+            for ordinal, score in zip(ordinals[0], scores[0], strict=True)
+            if int(ordinal) >= 0
+        ]
+        if len(observed) != requested or any(
+            not math.isfinite(score) for _, score in observed
+        ):
+            raise DenseIndexValidationError(
+                "FAISS returned incomplete or non-finite requested scores"
+            )
+        observed.sort(key=lambda item: (-item[1], product_ids[item[0]]))
+        if requested == catalog_size or observed[target - 1][1] > observed[-1][1]:
+            return tuple(observed[:target])
+        requested = min(catalog_size, requested * 2)
 
 
 def _validate_faiss_vector_parity(index: Any, embeddings: NDArray[Any]) -> None:
