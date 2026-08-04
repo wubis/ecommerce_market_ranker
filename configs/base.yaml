@@ -45,6 +45,21 @@ retrieval:
     max_top_k: 1000
     latency_sample_queries: 20
     model_cache_dir: models/huggingface
+  hybrid:
+    component_version: rrf-v1
+    rrf_constant: 60
+    sparse_top_k: 150
+    dense_top_k: 150
+    union_top_k: 200
+    max_union_top_k: 1000
+evaluation:
+  component_version: retrieval-eval-v1
+  default_profile: development
+  cutoffs: [10, 100]
+  bootstrap_replicates: 1000
+  bootstrap_batch_replicates: 100
+  candidate_partition_rows: 100000
+  metric_partition_rows: 100000
 logging:
   level: INFO
   format: json

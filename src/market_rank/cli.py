@@ -14,6 +14,10 @@ from market_rank.data.download import DownloadPolicy, download_validate_esci
 from market_rank.data.esci_raw import RawDataError, RawDataValidationError, load_release_manifest
 from market_rank.data.foundation import DataFoundationError, build_esci_foundation
 from market_rank.data.profiles import ProfileBuildError, build_esci_profiles
+from market_rank.evaluation.retrieval import (
+    RetrievalEvaluationError,
+    build_retrieval_evaluation,
+)
 from market_rank.retrieval.dense import (
     DenseRetrievalError,
     build_dense_index,
@@ -159,6 +163,23 @@ def build_parser() -> argparse.ArgumentParser:
     dense_parser.add_argument("--manifest", type=Path, default=DEFAULT_ESCI_MANIFEST)
     dense_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     dense_parser.add_argument(
+        "--code-revision",
+        default=None,
+        help="explicit lineage revision when Git discovery is unavailable",
+    )
+    hybrid_parser = retrieval_commands.add_parser(
+        "evaluate-hybrid",
+        help="persist fixed-cohort BM25/dense/RRF candidates, metrics, CIs, and slices",
+    )
+    hybrid_parser.add_argument("--manifest", type=Path, default=DEFAULT_ESCI_MANIFEST)
+    hybrid_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    hybrid_parser.add_argument(
+        "--profile",
+        choices=("development", "portfolio"),
+        default=None,
+        help="evaluation profile; defaults to evaluation.default_profile",
+    )
+    hybrid_parser.add_argument(
         "--code-revision",
         default=None,
         help="explicit lineage revision when Git discovery is unavailable",
@@ -313,6 +334,35 @@ def _run_build_dense(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _run_evaluate_hybrid(arguments: argparse.Namespace) -> int:
+    config = load_config([arguments.config])
+    release = load_release_manifest(arguments.manifest)
+    result = build_retrieval_evaluation(
+        release,
+        config,
+        code_revision=_resolve_code_revision(arguments, arguments.config),
+        profile=arguments.profile,
+    )
+    manifest = result.manifest
+    stages = ", ".join(
+        f"{stage.stage}={stage.candidate_rows} candidates/{stage.empty_queries} empty"
+        for stage in manifest.stages
+    )
+    print(f"retrieval cohort: {manifest.profile}, {manifest.query_count} queries")
+    print(f"stages: {stages}")
+    print(
+        f"report: {manifest.aggregate_metric_rows} aggregate rows, "
+        f"{manifest.comparison_metric_rows} paired comparison rows"
+    )
+    print(
+        f"combined resource: peak RSS {manifest.resource.peak_rss_bytes}/"
+        f"{manifest.resource.rss_limit_bytes} bytes"
+    )
+    status = "reused" if result.reused else "published"
+    print(f"{status} retrieval evaluation: {result.artifact.manifest.artifact_id}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run one explicit CLI command and return a bounded process exit code."""
     parser = build_parser()
@@ -330,6 +380,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_cache_minilm(arguments)
         if arguments.command == "retrieval" and arguments.retrieval_command == "build-dense":
             return _run_build_dense(arguments)
+        if arguments.command == "retrieval" and arguments.retrieval_command == "evaluate-hybrid":
+            return _run_evaluate_hybrid(arguments)
     except RawDataValidationError as exc:
         print(
             f"error: raw ESCI validation failed ({_failed_check_count(exc)} checks failed)",
@@ -343,6 +395,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         DenseRetrievalError,
         ProfileBuildError,
         RawDataError,
+        RetrievalEvaluationError,
         SparseRetrievalError,
         ValueError,
     ) as exc:

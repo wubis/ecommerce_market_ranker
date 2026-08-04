@@ -20,6 +20,13 @@ from market_rank.retrieval.dense import (
     dense_artifact_id,
     load_dense_index,
 )
+from market_rank.retrieval.hybrid import (
+    HybridCandidate,
+    HybridResult,
+    HybridRetrievalError,
+    RankedCandidate,
+    fuse_rrf,
+)
 from market_rank.retrieval.sparse import (
     SparseBuildError,
     SparseBuildResult,
@@ -52,6 +59,10 @@ __all__ = [
     "DenseResourceError",
     "DenseResourceMeasurement",
     "DenseRetrievalError",
+    "HybridCandidate",
+    "HybridResult",
+    "HybridRetrievalError",
+    "RankedCandidate",
     "SentenceTransformerEncoder",
     "SparseBuildError",
     "SparseBuildResult",
@@ -68,6 +79,7 @@ __all__ = [
     "build_sparse_index",
     "cache_dense_model",
     "dense_artifact_id",
+    "fuse_rrf",
     "load_dense_index",
     "load_sparse_index",
     "sparse_artifact_id",

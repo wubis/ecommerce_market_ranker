@@ -4,10 +4,12 @@ MarketRank is a planned CPU-first, multi-stage e-commerce search and ranking sys
 around the public Amazon ESCI Task 1 relevance judgments. The authoritative architecture is
 defined in [ELEPHANT.md](ELEPHANT.md).
 
-This repository has completed **Goldfish 008**: environment/tooling, reproducible ESCI data
+This repository has completed **Goldfish 009**: environment/tooling, reproducible ESCI data
 foundations, persisted fixed-catalog BM25 retrieval, protocol-safe metric primitives, and a
-checkpointed MiniLM/FAISS dense retriever. It intentionally contains no hybrid fusion,
-corpus-level retrieval report, ranking features/models, serving, or demo logic.
+checkpointed MiniLM/FAISS dense retriever. Deterministic RRF fusion now produces partitioned
+fixed-cohort retrieval reports with grouped confidence intervals, slices, paired comparisons,
+and a combined sparse+dense memory gate. It intentionally contains no query-understanding
+features, ranking models, serving, or demo logic.
 
 ## Reference environment
 
@@ -322,6 +324,33 @@ ordinals, FAISS type/count/dimension, and query-encoder model identity. It never
 weights or rebuilds embeddings/indexes. See
 [`docs/goldfish/008-dense-retrieval-faiss.md`](docs/goldfish/008-dense-retrieval-faiss.md).
 
+## Evaluate sparse, dense, and hybrid retrieval
+
+After both compatible indexes exist, build the development report or the larger portfolio
+report:
+
+```bash
+uv run market-rank retrieval evaluate-hybrid
+uv run market-rank retrieval evaluate-hybrid --profile portfolio
+```
+
+Goldfish 009 unions BM25 and dense top-150 results with RRF (`k=60`), deduplicates them, retains
+both sources' scores/ranks/retriever/index provenance, applies deterministic tie breaking, and
+caps the hybrid union at 200 products. One empty source is represented as degraded provenance;
+no-candidate queries remain explicit evaluation rows.
+
+All three stages are compared on the identical fixed catalog and profile query cohort under
+`retrieval_catalog_task1_us_v1`. Reports include only judged Recall, Exact Hit, judged MRR,
+known-judgment coverage, and unjudged rate for `E` and `E+S` at cutoffs 10 and 100—never naive
+catalog precision, MAP, or NDCG.
+
+Candidate and query-metric rows are partitioned. Aggregate reports include fixed-seed 95%
+confidence intervals that resample normalized-query groups, named query-length/source/split/
+Exact-presence slices, and paired hybrid-vs-sparse/dense/best-single improvements. Promotion
+also requires the simultaneously loaded sparse+dense process and completed evaluation phase to
+remain below the configured 5.5GB RSS limit. See
+[`docs/goldfish/009-hybrid-retrieval-evaluation.md`](docs/goldfish/009-hybrid-retrieval-evaluation.md).
+
 ## Download and offline boundary
 
 Internet access is allowed only during explicit setup operations:
@@ -372,6 +401,7 @@ ecommerce_market_ranker/
 ├── docs/goldfish/006-data-foundation.md
 ├── docs/goldfish/007-sparse-retrieval-evaluation.md
 ├── docs/goldfish/008-dense-retrieval-faiss.md
+├── docs/goldfish/009-hybrid-retrieval-evaluation.md
 ├── docs/goldfish/consolidated-roadmap.md
 ├── src/market_rank/
 │   ├── __init__.py
@@ -386,14 +416,17 @@ ecommerce_market_ranker/
 │   │   └── profiles.py
 │   ├── evaluation/
 │   │   ├── __init__.py
-│   │   └── metrics.py
+│   │   ├── metrics.py
+│   │   └── retrieval.py
 │   └── retrieval/
 │       ├── __init__.py
 │       ├── dense.py
+│       ├── hybrid.py
 │       └── sparse.py
 └── tests/
-    ├── integration/test_esci_foundation.py
     ├── integration/test_dense_retrieval.py
+    ├── integration/test_esci_foundation.py
+    ├── integration/test_retrieval_evaluation.py
     ├── integration/test_sparse_retrieval.py
     ├── smoke/test_import.py
     └── unit/
@@ -401,6 +434,7 @@ ecommerce_market_ranker/
         ├── test_config.py
         ├── test_esci_download.py
         ├── test_esci_profiles.py
+        ├── test_hybrid.py
         ├── test_metrics.py
         └── test_esci_raw.py
 ```

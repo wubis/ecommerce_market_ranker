@@ -130,6 +130,40 @@ def test_dense_default_top_k_must_not_exceed_hard_maximum() -> None:
         )
 
 
+def test_hybrid_and_evaluation_defaults_are_bounded_for_fair_comparison() -> None:
+    resolved = load_config([BASE_CONFIG]).config
+
+    assert resolved.retrieval.hybrid.rrf_constant == 60
+    assert resolved.retrieval.hybrid.sparse_top_k == 150
+    assert resolved.retrieval.hybrid.dense_top_k == 150
+    assert resolved.retrieval.hybrid.union_top_k == 200
+    assert resolved.evaluation.cutoffs == (10, 100)
+    assert resolved.evaluation.bootstrap_replicates == 1000
+
+
+def test_evaluation_cutoff_cannot_exceed_any_compared_retrieval_depth() -> None:
+    with pytest.raises(ConfigValidationError, match="evaluation cutoffs"):
+        load_config(
+            [BASE_CONFIG],
+            overrides={
+                "evaluation.cutoffs": [10, 151],
+                "retrieval.hybrid.union_top_k": 200,
+            },
+        )
+
+
+def test_hybrid_source_depth_cannot_exceed_source_index_maximum() -> None:
+    with pytest.raises(ConfigValidationError, match="sparse_top_k"):
+        load_config(
+            [BASE_CONFIG],
+            overrides={
+                "retrieval.sparse.max_top_k": 100,
+                "retrieval.sparse.default_top_k": 100,
+                "retrieval.hybrid.sparse_top_k": 101,
+            },
+        )
+
+
 @pytest.mark.parametrize(
     "content",
     [

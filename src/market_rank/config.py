@@ -130,11 +130,62 @@ class DenseRetrievalConfig(_StrictModel):
         return self
 
 
+class HybridRetrievalConfig(_StrictModel):
+    """Deterministic reciprocal-rank fusion and candidate bounds."""
+
+    component_version: Literal["rrf-v1"] = "rrf-v1"
+    rrf_constant: int = Field(default=60, strict=True, ge=1, le=1000)
+    sparse_top_k: int = Field(default=150, strict=True, ge=1, le=5000)
+    dense_top_k: int = Field(default=150, strict=True, ge=1, le=5000)
+    union_top_k: int = Field(default=200, strict=True, ge=1, le=5000)
+    max_union_top_k: int = Field(default=1000, strict=True, ge=1, le=5000)
+
+    @model_validator(mode="after")
+    def validate_union(self) -> Self:
+        if self.union_top_k > self.max_union_top_k:
+            raise ValueError("union_top_k must not exceed max_union_top_k")
+        return self
+
+
 class RetrievalConfig(_StrictModel):
     """Versioned retrieval subsystem configuration."""
 
     sparse: SparseRetrievalConfig = SparseRetrievalConfig()
     dense: DenseRetrievalConfig = DenseRetrievalConfig()
+    hybrid: HybridRetrievalConfig = HybridRetrievalConfig()
+
+    @model_validator(mode="after")
+    def validate_source_limits(self) -> Self:
+        if self.hybrid.sparse_top_k > self.sparse.max_top_k:
+            raise ValueError("hybrid sparse_top_k exceeds sparse max_top_k")
+        if self.hybrid.dense_top_k > self.dense.max_top_k:
+            raise ValueError("hybrid dense_top_k exceeds dense max_top_k")
+        return self
+
+
+class EvaluationConfig(_StrictModel):
+    """Fixed-cohort retrieval summaries, slices, and bounded grouped bootstrap."""
+
+    component_version: Literal["retrieval-eval-v1"] = "retrieval-eval-v1"
+    default_profile: Literal["development", "portfolio"] = "development"
+    cutoffs: tuple[int, ...] = (10, 100)
+    bootstrap_replicates: int = Field(default=1000, strict=True, ge=100, le=10000)
+    bootstrap_batch_replicates: int = Field(default=100, strict=True, ge=10, le=1000)
+    candidate_partition_rows: int = Field(default=100000, strict=True, ge=1, le=1000000)
+    metric_partition_rows: int = Field(default=100000, strict=True, ge=1, le=1000000)
+
+    @model_validator(mode="after")
+    def validate_evaluation(self) -> Self:
+        if not self.cutoffs or any(
+            not isinstance(cutoff, int) or isinstance(cutoff, bool) or cutoff < 1
+            for cutoff in self.cutoffs
+        ):
+            raise ValueError("evaluation cutoffs must be positive integers")
+        if self.cutoffs != tuple(sorted(set(self.cutoffs))):
+            raise ValueError("evaluation cutoffs must be unique and sorted")
+        if self.bootstrap_batch_replicates > self.bootstrap_replicates:
+            raise ValueError("bootstrap batch size exceeds total replicates")
+        return self
 
 
 class LoggingConfig(_StrictModel):
@@ -154,7 +205,19 @@ class AppConfig(_StrictModel):
     runtime: RuntimeConfig = RuntimeConfig()
     dataset: DatasetConfig = DatasetConfig()
     retrieval: RetrievalConfig = RetrievalConfig()
+    evaluation: EvaluationConfig = EvaluationConfig()
     logging: LoggingConfig = LoggingConfig()
+
+    @model_validator(mode="after")
+    def validate_evaluation_retrieval_bounds(self) -> Self:
+        largest_cutoff = max(self.evaluation.cutoffs)
+        if largest_cutoff > min(
+            self.retrieval.hybrid.sparse_top_k,
+            self.retrieval.hybrid.dense_top_k,
+            self.retrieval.hybrid.union_top_k,
+        ):
+            raise ValueError("evaluation cutoffs exceed a configured retrieval depth")
+        return self
 
 
 @dataclass(frozen=True, slots=True)
@@ -319,6 +382,8 @@ __all__ = [
     "ConfigValidationError",
     "DatasetConfig",
     "DenseRetrievalConfig",
+    "EvaluationConfig",
+    "HybridRetrievalConfig",
     "LoggingConfig",
     "PathsConfig",
     "ProjectConfig",

@@ -14,9 +14,9 @@ tested, documented, reproducible, and independently reviewable.
 
 | Scope | Target |
 |---|---:|
-| Current implemented sequence | Through Goldfish 008 |
+| Current implemented sequence | Through Goldfish 009 |
 | Core portfolio-ready project | Goldfish 016 |
-| Remaining core Goldfishes | Approximately 8 |
+| Remaining core Goldfishes | Approximately 7 |
 | Optional neural and diversity extensions | Goldfish 017–018 |
 
 Goldfish 004A is an additional completed extension even though it does not advance the primary
@@ -47,6 +47,8 @@ storage, ordered ID alignment, FAISS CPU build/load/search, explicit-pair scorin
 RSS measurements, and restart/reload parity.
 
 ### Goldfish 009 — Hybrid Retrieval and Retrieval Evaluation
+
+**Status: Implemented.**
 
 Implement deterministic RRF union/deduplication, source score/rank/provenance preservation,
 fixed-catalog candidate generation, fair sparse/dense/hybrid comparisons, query-level
