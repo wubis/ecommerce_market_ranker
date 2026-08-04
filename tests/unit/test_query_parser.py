@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+import market_rank.query.parser as parser_module
 from market_rank.config import QueryUnderstandingConfig
 from market_rank.query.parser import (
     QueryParser,
@@ -51,6 +52,26 @@ def test_longest_brand_boundary_and_color_alias_are_non_filtering_signals() -> N
     assert parsed.color is not None and parsed.color.value == "gray"
     assert parsed.color.source == "alias"
     assert parsed.color.confidence == 0.9
+
+
+def test_parser_indexes_catalog_entities_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parser = QueryParser(_state(), QueryUnderstandingConfig())
+    original = parser_module.tokenize
+    calls = 0
+
+    def observed(text: str) -> tuple[str, ...]:
+        nonlocal calls
+        calls += 1
+        return original(text)
+
+    monkeypatch.setattr(parser_module, "tokenize", observed)
+    parsed = parser.parse("acme pro charcoal case")
+
+    assert parsed.brand is not None and parsed.brand.value == "acme pro"
+    assert parsed.color is not None and parsed.color.value == "gray"
+    assert calls == 1
 
 
 @pytest.mark.parametrize("text", ["", " \t\n", "x" * 513])

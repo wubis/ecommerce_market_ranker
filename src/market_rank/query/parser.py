@@ -254,17 +254,28 @@ def build_parser_state(
     )
 
 
-def _longest_boundary_match(text_tokens: tuple[str, ...], values: tuple[str, ...]) -> str | None:
-    token_count = len(text_tokens)
+def _boundary_index(values: tuple[str, ...]) -> tuple[dict[tuple[str, ...], str], int]:
+    index: dict[tuple[str, ...], str] = {}
+    maximum_width = 0
     candidates = sorted(values, key=lambda value: (-len(tokenize(value)), -len(value), value))
     for value in candidates:
         value_tokens = tokenize(value)
-        width = len(value_tokens)
-        if width and any(
-            text_tokens[start : start + width] == value_tokens
-            for start in range(token_count - width + 1)
-        ):
-            return value
+        if value_tokens:
+            index.setdefault(value_tokens, value)
+            maximum_width = max(maximum_width, len(value_tokens))
+    return index, maximum_width
+
+
+def _longest_boundary_match(
+    text_tokens: tuple[str, ...],
+    index: dict[tuple[str, ...], str],
+    maximum_width: int,
+) -> str | None:
+    token_count = len(text_tokens)
+    for width in range(min(maximum_width, token_count), 0, -1):
+        for start in range(token_count - width + 1):
+            if value := index.get(text_tokens[start : start + width]):
+                return value
     return None
 
 
@@ -276,6 +287,13 @@ class QueryParser:
             raise QueryParserError("parser state and configured parser versions differ")
         self.state = state
         self.config = config
+        self._brands, self._brand_maximum_width = _boundary_index(state.brands)
+        self._colors, self._color_maximum_width = _boundary_index(state.colors)
+        self._color_aliases, self._color_alias_maximum_width = _boundary_index(
+            tuple(alias for alias, _ in state.color_aliases)
+        )
+        self._color_alias_values = dict(state.color_aliases)
+        self._spelling_aliases = dict(state.spelling_aliases)
 
     def parse(self, raw_text: str) -> ParsedQuery:
         if not isinstance(raw_text, str):
@@ -295,20 +313,23 @@ class QueryParser:
             raise QueryParserError("query has no tokens after normalization")
         if len(initial_tokens) > self.config.max_query_tokens:
             raise QueryParserError("query exceeds configured token limit")
-        spelling_aliases = dict(self.state.spelling_aliases)
-        corrected = tuple(spelling_aliases.get(token, token) for token in initial_tokens)
+        corrected = tuple(self._spelling_aliases.get(token, token) for token in initial_tokens)
         warnings = ("conservative_spelling_alias_applied",) if corrected != initial_tokens else ()
         corrected_text = " ".join(corrected)
 
-        brand_value = _longest_boundary_match(corrected, self.state.brands)
-        color_value = _longest_boundary_match(corrected, self.state.colors)
+        brand_value = _longest_boundary_match(
+            corrected, self._brands, self._brand_maximum_width
+        )
+        color_value = _longest_boundary_match(
+            corrected, self._colors, self._color_maximum_width
+        )
         color_source: Literal["catalog", "alias"] = "catalog"
         if color_value is None:
             alias = _longest_boundary_match(
-                corrected, tuple(key for key, _ in self.state.color_aliases)
+                corrected, self._color_aliases, self._color_alias_maximum_width
             )
             if alias is not None:
-                color_value = dict(self.state.color_aliases)[alias]
+                color_value = self._color_alias_values[alias]
                 color_source = "alias"
 
         models = tuple(

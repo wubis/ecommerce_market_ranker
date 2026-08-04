@@ -135,6 +135,7 @@ def test_runtime_serves_all_promoted_stages_with_bounded_debug_and_fallbacks(
 
     assert active.promoted_stage == bundle.manifest.active_relevance.selected_stage
     assert active.resolved_stage == active.promoted_stage
+    assert all(item.debug is None for item in active.results)
     assert tuple(item.rank for item in active.results) == tuple(range(1, len(active.results) + 1))
     assert len({item.product_id for item in active.results}) == len(active.results) <= 5
     assert lambdamart.resolved_stage == "lambdamart"

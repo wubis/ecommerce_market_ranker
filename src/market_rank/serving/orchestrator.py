@@ -128,6 +128,8 @@ class ServingRuntime:
         self.product_store = product_store
         self.feature_state = feature_state
         self.parser = QueryParser(feature_state.parser_state, config.config.query_understanding)
+        self._brand_codes = dict(feature_state.brand_codes)
+        self._color_codes = dict(feature_state.color_codes)
         self.sparse = sparse
         self.dense = dense
         self.rankers = rankers
@@ -245,6 +247,8 @@ class ServingRuntime:
         parsed: ParsedQuery,
         candidates: tuple[HybridCandidate, ...],
         products: dict[str, ProductRecord],
+        *,
+        include_debug: bool,
     ) -> _FeatureRows:
         product_ids = tuple(candidate.product_id for candidate in candidates)
         sparse_pairs = (
@@ -279,8 +283,8 @@ class ServingRuntime:
                 parsed,
                 _product_view(products[product_id]),
                 lexical_specificity=specificity,
-                brand_codes=dict(self.feature_state.brand_codes),
-                color_codes=dict(self.feature_state.color_codes),
+                brand_codes=self._brand_codes,
+                color_codes=self._color_codes,
                 bm25_score=sparse_scores[product_id],
                 bm25_rank_fraction=sparse_fractions[product_id],
                 dense_score=dense_scores[product_id],
@@ -290,7 +294,8 @@ class ServingRuntime:
             )
             row = [float(values[name]) for name in FEATURE_NAMES]
             rows.append(row)
-            debug[product_id] = tuple(zip(FEATURE_NAMES, row, strict=True))
+            if include_debug:
+                debug[product_id] = tuple(zip(FEATURE_NAMES, row, strict=True))
         matrix = np.asarray(rows, dtype=np.float32, order="C")
         return _FeatureRows(matrix, debug)
 
@@ -434,7 +439,11 @@ class ServingRuntime:
                     try:
                         feature_started = time.perf_counter()
                         feature_rows = self._feature_rows(
-                            request.query, parsed, candidates, products
+                            request.query,
+                            parsed,
+                            candidates,
+                            products,
+                            include_debug=request.debug,
                         )
                         features_ms = _elapsed_ms(feature_started)
                         if _elapsed_ms(started) >= deadline_ms:
@@ -503,7 +512,11 @@ class ServingRuntime:
                 if request.debug and rank <= serving.max_debug_candidates:
                     if feature_rows is None:
                         feature_rows = self._feature_rows(
-                            request.query, parsed, candidates, products
+                            request.query,
+                            parsed,
+                            candidates,
+                            products,
+                            include_debug=True,
                         )
                     debug = ResultDebug(
                         feature_values=feature_rows.by_product[candidate.product_id]
