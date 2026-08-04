@@ -1,6 +1,6 @@
 # MarketRank
 
-MarketRank is a planned CPU-first, multi-stage e-commerce search and ranking system built
+MarketRank is a CPU-first, multi-stage e-commerce search and ranking system built
 around the public Amazon ESCI Task 1 relevance judgments. The authoritative architecture is
 defined in [ELEPHANT.md](ELEPHANT.md).
 

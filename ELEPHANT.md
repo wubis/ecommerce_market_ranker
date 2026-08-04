@@ -2,10 +2,10 @@
 
 | Field | Value |
 |---|---|
-| Document status | **Proposed — Elephant review required before implementation** |
+| Document status | **Implemented — core roadmap complete through Goldfish 016A** |
 | Intended audience | ML engineers, applied scientists, software engineers, reviewers, and future Goldfish authors |
-| Authors | _TBD_ |
-| Last updated | _YYYY-MM-DD_ |
+| Authors | Justin Wang |
+| Last updated | 2026-08-04 |
 | Repository | `ecommerce_market_ranker` |
 | System | MarketRank: Multi-Stage E-commerce Search and Ranking System |
 | Required reference hardware | Apple M3 Mac with 8 GB unified memory; CPU-first, no CUDA |
