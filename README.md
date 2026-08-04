@@ -4,7 +4,7 @@ MarketRank is a planned CPU-first, multi-stage e-commerce search and ranking sys
 around the public Amazon ESCI Task 1 relevance judgments. The authoritative architecture is
 defined in [ELEPHANT.md](ELEPHANT.md).
 
-This repository has completed the core roadmap through **Goldfish 016**: environment/tooling,
+This repository has completed the core roadmap through **Goldfish 016A**: environment/tooling,
 reproducible ESCI data
 foundations, persisted fixed-catalog BM25 retrieval, protocol-safe metric primitives, and a
 checkpointed MiniLM/FAISS dense retriever. Deterministic RRF fusion now produces partitioned
@@ -28,6 +28,11 @@ uses the untouched project-test split without reselection and packages protocol-
 ablations, negative findings, lineage, plots, validated demo screenshots, limitations, and clean
 reproduction evidence. The path is persisted-fixture validated; this checkout contains no real
 portfolio artifact DAG or screenshots, so it makes no production numeric claim.
+
+Goldfish 016A makes the real workflow storage-conscious without changing judged-pool science. The
+default `esci_task1_us_compact_catalog_v1` retains every product judged for a portfolio query plus
+100,000 seeded SHA-256-selected, label-blind distractors. Retrieval, latency, and resource evidence
+is explicitly compact-catalog evidence and is never described as full-catalog performance.
 
 ## Reference environment
 
@@ -264,11 +269,12 @@ After Goldfish 005 succeeds, run:
 uv run market-rank data build-esci-foundation
 ```
 
-The stage publishes canonical queries, sources, judgments, catalog products, versioned product
-documents, fixed retrieval membership, no-text exclusions, and complete development/portfolio
-judged pools. It keeps official label IDs and gains separate, constructs catalog membership from
-all Task-1 US participation without reading labels or profile selection, and records exact table
-keys/counts/checksums.
+The stage publishes canonical queries, sources, judgments, selected catalog products, versioned
+product documents, fixed retrieval membership, no-text exclusions, and complete
+development/portfolio judged pools. It keeps official label IDs and gains separate. Compact mode
+retains every portfolio-judged product and adds a deterministic label-blind distractor sample from
+all Task-1 US participation; full mode preserves the original full source catalog. Both modes
+record exact selection counts, table keys, counts, and checksums.
 
 Product documents use the versioned marker template described in
 [`docs/goldfish/006-data-foundation.md`](docs/goldfish/006-data-foundation.md), while official
@@ -276,6 +282,10 @@ display fields remain unchanged. A preliminary resource gate estimates sparse in
 float32 vectors, ID/display state, and runtime reserve against the 5.5 GB process-RSS limit. An
 over-limit estimate prevents promotion; later retrieval Goldfishes replace estimates with
 measured component and combined RSS.
+
+See the [`Goldfish 016A compact-catalog contract`](docs/goldfish/016a-compact-catalog-benchmark.md)
+for the sampling, audit, and claim boundaries. Changing catalog mode or distractor target changes
+the configuration hash and requires a complete downstream rebuild.
 
 The complete local data sequence is:
 
@@ -601,6 +611,7 @@ ecommerce_market_ranker/
 ├── docs/goldfish/014-streamlit-portfolio-demo.md
 ├── docs/goldfish/015-hardening-m3-qualification.md
 ├── docs/goldfish/016-frozen-portfolio-final-report.md
+├── docs/goldfish/016a-compact-catalog-benchmark.md
 ├── docs/goldfish/consolidated-roadmap.md
 ├── docs/runbooks/final-portfolio-release.md
 ├── docs/runbooks/local-release-qualification.md

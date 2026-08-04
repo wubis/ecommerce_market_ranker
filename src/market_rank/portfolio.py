@@ -29,6 +29,13 @@ from market_rank.artifacts import (
     LoadedArtifact,
 )
 from market_rank.config import ResolvedConfig
+from market_rank.data.foundation import (
+    COMPACT_CATALOG_ID,
+    FOUNDATION_MANIFEST_FILENAME,
+    CatalogId,
+    DataFoundationManifest,
+    load_foundation_manifest,
+)
 from market_rank.evaluation.metrics import (
     CLOSED_POOL_PROTOCOL,
     END_TO_END_PROTOCOL,
@@ -169,6 +176,12 @@ class PortfolioReleaseManifest(_StrictModel):
     serving_bundle_artifact_id: str = Field(strict=True, min_length=1)
     qualification_artifact_id: str = Field(strict=True, min_length=1)
     retrieval_evaluation_artifact_id: str = Field(strict=True, min_length=1)
+    catalog_id: CatalogId
+    catalog_source_products: int = Field(strict=True, ge=1)
+    catalog_required_judged_products: int = Field(strict=True, ge=1)
+    catalog_distractor_products: int = Field(strict=True, ge=0)
+    catalog_candidate_products: int = Field(strict=True, ge=1)
+    catalog_usable_products: int = Field(strict=True, ge=1)
     selection_split: Literal["validation"] = "validation"
     final_evaluation_split: Literal["test"] = "test"
     active_stage: Literal["rrf", "pointwise", "lambdamart"]
@@ -193,6 +206,16 @@ class PortfolioReleaseManifest(_StrictModel):
         finding_ids = tuple(item.finding_id for item in self.negative_findings)
         if len(finding_ids) != len(set(finding_ids)):
             raise ValueError("portfolio negative findings must have unique identifiers")
+        if self.catalog_candidate_products != (
+            self.catalog_required_judged_products + self.catalog_distractor_products
+        ):
+            raise ValueError("portfolio catalog counts do not match required plus distractors")
+        if (
+            not self.catalog_usable_products
+            <= self.catalog_candidate_products
+            <= (self.catalog_source_products)
+        ):
+            raise ValueError("portfolio catalog counts are not properly nested")
         if self.finalization_peak_rss_bytes > self.rss_limit_bytes:
             raise ValueError("passing portfolio release exceeds the RSS limit")
         return self
@@ -211,6 +234,8 @@ class _Inputs:
     ranking_manifest: RankingEvaluationManifest
     retrieval: LoadedArtifact
     retrieval_manifest: RetrievalEvaluationManifest
+    foundation: LoadedArtifact
+    foundation_manifest: DataFoundationManifest
     serving: LoadedArtifact
     serving_manifest: ServingBundleManifest
     qualification: LoadedArtifact
@@ -375,10 +400,15 @@ def _load_inputs(
     retrieval_manifest = load_retrieval_evaluation_manifest(
         retrieval.path / RETRIEVAL_EVALUATION_FILENAME
     )
+    foundation = store.load(retrieval_manifest.foundation_artifact_id)
+    foundation_manifest = load_foundation_manifest(foundation.path / FOUNDATION_MANIFEST_FILENAME)
     serving_manifest = load_serving_bundle_manifest(serving.path / SERVING_BUNDLE_FILENAME)
     qualification_report = load_qualification_report(qualification.path / QUALIFICATION_FILENAME)
     ranking_component = next(
         item for item in serving_manifest.components if item.component == "ranking_evaluation"
+    )
+    foundation_component = next(
+        item for item in serving_manifest.components if item.component == "foundation"
     )
     expected_qualification_dependency = ArtifactDependency(
         artifact_id=serving.manifest.artifact_id,
@@ -387,6 +417,7 @@ def _load_inputs(
     if (
         ranking_manifest.profile != "portfolio"
         or retrieval_manifest.profile != "portfolio"
+        or foundation_manifest.config_sha256 != config.sha256
         or serving_manifest.profile != "portfolio"
         or ranking_manifest.config_sha256 != config.sha256
         or retrieval_manifest.config_sha256 != config.sha256
@@ -394,6 +425,11 @@ def _load_inputs(
         or qualification_report.config_sha256 != config.sha256
         or ranking_component.artifact_id != ranking.manifest.artifact_id
         or ranking_component.manifest_sha256 != ranking.manifest_sha256
+        or retrieval_manifest.foundation_artifact_id != foundation.manifest.artifact_id
+        or retrieval_manifest.foundation_manifest_sha256 != foundation.manifest_sha256
+        or foundation_component.artifact_id != foundation.manifest.artifact_id
+        or foundation_component.manifest_sha256 != foundation.manifest_sha256
+        or foundation_manifest.catalog_id != retrieval_manifest.catalog_id
         or qualification.manifest.dependencies != (expected_qualification_dependency,)
         or qualification_report.bundle_id != serving.manifest.artifact_id
         or not qualification_report.passed
@@ -404,6 +440,8 @@ def _load_inputs(
         ranking_manifest,
         retrieval,
         retrieval_manifest,
+        foundation,
+        foundation_manifest,
         serving,
         serving_manifest,
         qualification,
@@ -561,6 +599,12 @@ def _report_markdown(
         "\n".join(f"- {item.finding}" for item in manifest.negative_findings)
         or "- No configured ablation had a non-positive mean or interval crossing zero."
     )
+    catalog_scope = (
+        "This compact benchmark retains every portfolio judged product and a deterministic "
+        "label-blind distractor sample; it is not a full-catalog result."
+        if manifest.catalog_id == COMPACT_CATALOG_ID
+        else "This benchmark uses the full fixed Task-1 US research catalog."
+    )
     return f"""# MarketRank Final Portfolio Report
 
 ## Measured headline
@@ -577,6 +621,14 @@ MarketRank is a CPU-first multi-stage product-search reference: deterministic BM
 MiniLM/FAISS retrieve candidates, RRF combines them, and validation-selected LightGBM relevance
 may reorder the fixed union. Immutable artifacts connect data, features, models, evaluation,
 serving, qualification, and this report.
+
+Catalog: `{manifest.catalog_id}`. {catalog_scope}
+
+- Source Task-1 US products: {manifest.catalog_source_products}
+- Required portfolio-judged products: {manifest.catalog_required_judged_products}
+- Deterministic distractors: {manifest.catalog_distractor_products}
+- Selected catalog candidates: {manifest.catalog_candidate_products}
+- Usable retrieval documents: {manifest.catalog_usable_products}
 
 ## Protocol-separated evidence
 
@@ -625,11 +677,18 @@ Exact lineage is in `{LINEAGE_FILENAME}` and clean gate evidence is in
 """
 
 
-def _limitations_markdown() -> str:
-    return """# Limitations
+def _limitations_markdown(catalog_id: CatalogId) -> str:
+    catalog_limitation = (
+        "- The compact catalog retains every selected judged product plus deterministic "
+        "label-blind "
+        "distractors; retrieval values are not full-catalog results.\n"
+        if catalog_id == COMPACT_CATALOG_ID
+        else ""
+    )
+    return f"""# Limitations
 
 - Amazon ESCI supplies bounded judged product lists, not exhaustive catalog judgments.
-- Missing judgments mean unknown, never automatically irrelevant.
+{catalog_limitation}- Missing judgments mean unknown, never automatically irrelevant.
 - Closed-pool NDCG measures ordering of supplied judged products; retrieval metrics use the fixed
   catalog and are reported separately.
 - End-to-end ranking diagnostics are conditional on the retrieved union and are not official Task
@@ -691,7 +750,11 @@ def _reuse(
     if artifact.manifest.dependencies != expected:
         raise PortfolioValidationError("portfolio release dependencies are incompatible")
     manifest = load_portfolio_manifest(artifact.path / PORTFOLIO_RELEASE_FILENAME)
-    if manifest.config_sha256 != config.sha256 or manifest.artifact_id != artifact_id:
+    if (
+        manifest.config_sha256 != config.sha256
+        or manifest.artifact_id != artifact_id
+        or manifest.catalog_id != inputs.retrieval_manifest.catalog_id
+    ):
         raise PortfolioValidationError("portfolio release identity is incompatible")
     return PortfolioBuildResult(artifact, manifest, True)
 
@@ -843,6 +906,16 @@ def build_portfolio_release(
         serving_bundle_artifact_id=inputs.serving.manifest.artifact_id,
         qualification_artifact_id=inputs.qualification.manifest.artifact_id,
         retrieval_evaluation_artifact_id=inputs.retrieval.manifest.artifact_id,
+        catalog_id=inputs.retrieval_manifest.catalog_id,
+        catalog_source_products=inputs.foundation_manifest.catalog_selection.source_products,
+        catalog_required_judged_products=(
+            inputs.foundation_manifest.catalog_selection.required_judged_products
+        ),
+        catalog_distractor_products=(
+            inputs.foundation_manifest.catalog_selection.selected_distractor_products
+        ),
+        catalog_candidate_products=inputs.foundation_manifest.catalog_candidate_products,
+        catalog_usable_products=inputs.foundation_manifest.catalog_products,
         active_stage=inputs.ranking_manifest.active_relevance.selected_stage,
         test_query_count=test_query_count,
         test_prediction_rows=frozen.predictions.height,
@@ -952,6 +1025,10 @@ def build_portfolio_release(
                     "artifact_id": inputs.retrieval.manifest.artifact_id,
                     "manifest_sha256": inputs.retrieval.manifest_sha256,
                 },
+                "foundation": {
+                    "artifact_id": inputs.foundation.manifest.artifact_id,
+                    "manifest_sha256": inputs.foundation.manifest_sha256,
+                },
                 "serving_bundle": {
                     "artifact_id": inputs.serving.manifest.artifact_id,
                     "manifest_sha256": inputs.serving.manifest_sha256,
@@ -964,7 +1041,9 @@ def build_portfolio_release(
             (root / LINEAGE_FILENAME).write_text(
                 json.dumps(lineage, sort_keys=True, separators=(",", ":")), encoding="utf-8"
             )
-            (root / LIMITATIONS_FILENAME).write_text(_limitations_markdown(), encoding="utf-8")
+            (root / LIMITATIONS_FILENAME).write_text(
+                _limitations_markdown(manifest.catalog_id), encoding="utf-8"
+            )
             (root / FINAL_REPORT_FILENAME).write_text(
                 _report_markdown(manifest, ranking_overall, inputs.qualification_report),
                 encoding="utf-8",

@@ -19,6 +19,9 @@ dataset:
   train_basis_points: 8500
   development_query_groups: 5000
   portfolio_query_groups: 20000
+  catalog_mode: compact
+  catalog_selection_version: portfolio-judged-plus-sha256-v1
+  compact_catalog_distractor_products: 100000
   product_document_version: product-document-v1
   title_max_chars: 512
   brand_max_chars: 128

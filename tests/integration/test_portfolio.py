@@ -12,6 +12,7 @@ import polars as pl
 import pytest
 
 from market_rank.artifacts import ArtifactValidationError
+from market_rank.data.foundation import COMPACT_CATALOG_ID
 from market_rank.evaluation.metrics import (
     CLOSED_POOL_PROTOCOL,
     END_TO_END_PROTOCOL,
@@ -135,6 +136,12 @@ def test_final_portfolio_evaluates_test_once_packages_all_evidence_and_reuses(
     assert len(result.artifact.manifest.dependencies) == 3
     assert result.manifest.final_evaluation_split == "test"
     assert result.manifest.selection_split == "validation"
+    assert result.manifest.catalog_id == COMPACT_CATALOG_ID
+    assert result.manifest.catalog_candidate_products == (
+        result.manifest.catalog_required_judged_products
+        + result.manifest.catalog_distractor_products
+    )
+    assert result.manifest.catalog_usable_products <= result.manifest.catalog_candidate_products
     assert result.manifest.test_query_count > 0
     assert len(result.manifest.screenshots) == 3
     assert (result.artifact.path / FINAL_REPORT_FILENAME).is_file()
@@ -166,6 +173,7 @@ def test_final_portfolio_evaluates_test_once_packages_all_evidence_and_reuses(
     assert pl.read_parquet(result.artifact.path / METRICS_FILENAME).height >= ranking.height
     report = (result.artifact.path / FINAL_REPORT_FILENAME).read_text(encoding="utf-8")
     assert "not catalog retrieval or live Amazon metrics" in report
+    assert "it is not a full-catalog result" in report
     assert "Negative and inconclusive results" in report
 
     reused = build_portfolio_release(

@@ -32,6 +32,7 @@ from market_rank.data.foundation import (
     CATALOG_MEMBERSHIP_FILENAME,
     FOUNDATION_MANIFEST_FILENAME,
     PRODUCTS_FILENAME,
+    CatalogId,
     DataFoundationManifest,
     load_foundation_manifest,
 )
@@ -169,7 +170,7 @@ class ServingBundleManifest(_StrictModel):
     profile: Profile
     component_version: Literal["serving-bundle-v1"] = "serving-bundle-v1"
     bundle_id_policy: Literal["explicit-only-no-latest-v1"] = "explicit-only-no-latest-v1"
-    catalog_id: Literal["esci_task1_us_catalog_v1"]
+    catalog_id: CatalogId
     catalog_membership_sha256: Sha256Digest
     product_document_version: Literal["product-document-v1"]
     product_count: int = Field(strict=True, ge=1)

@@ -35,7 +35,8 @@ Two populations remain separate:
 
 The inherited catalog-retrieval table is filtered to the project-test slice under
 `retrieval_catalog_task1_us_v1`. The finalizer revalidates prohibited-metric rules before writing
-any report.
+any report. When Goldfish 016A compact mode is active, the generated report and limitations name
+`esci_task1_us_compact_catalog_v1` and prohibit full-catalog interpretation.
 
 ## Required Evidence
 
@@ -171,4 +172,3 @@ Remove the `portfolio_report` configuration, portfolio module/CLI/tests/docs, an
 Remove generated `portfolio-release` artifacts and reports only. Goldfishes 001–015 remain intact,
 although configuration-hashed upstream artifacts must be rebuilt after removing Goldfish 016
 fields.
-

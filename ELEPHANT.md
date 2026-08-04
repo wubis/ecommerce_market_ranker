@@ -344,10 +344,11 @@ ESCI supplies bounded judged lists, not exhaustive judgments over a live catalog
 ### 8.7 Candidate and evaluation populations
 
 1. **`esci_task1_us_judged_pool_v1`:** the complete official judged list for each included query. This is the only required population for supervised fitting, early stopping, pointwise/LambdaMART comparison, and official-gain NDCG.
-2. **`esci_task1_us_catalog_v1`:** distinct products referenced by any `us`, `small_version == 1` example across both official splits, joined to official products. Membership reads participation fields but not label values. It is fixed across query profiles.
-3. **`end_to_end_diagnostic_v1`:** hybrid retrieval from the fixed catalog followed by ranker inference. Products outside the query’s judged pool remain unjudged; only qrels-aware retrieval metrics and explicitly conditional ordering diagnostics are valid.
+2. **`esci_task1_us_catalog_v1`:** full-catalog mode: distinct products referenced by any `us`, `small_version == 1` example across both official splits, joined to official products. Membership reads participation fields but not label values.
+3. **`esci_task1_us_compact_catalog_v1`:** required local benchmark mode: every distinct product judged for a selected portfolio query plus a configured seeded SHA-256 sample of additional Task-1 US products. Selection reads portfolio membership and stable product keys but never label values, gains, model output, or evaluation results. Development and portfolio share the same resolved compact membership.
+4. **`end_to_end_diagnostic_v1`:** hybrid retrieval from the resolved named fixed catalog followed by ranker inference. Products outside the query’s judged pool remain unjudged; only qrels-aware retrieval metrics and explicitly conditional ordering diagnostics are valid.
 
-An optional all-US-products catalog is a separately named stress test. Catalog manifests record predicate, checksums, membership count/hash, missing documents, text template, and estimated/resident index sizes. Query-profile sampling never changes required catalog membership.
+An optional all-US-products catalog is a separately named stress test. Catalog manifests record mode, selection method, full source count, required judged-product count, distractor target/count, checksums, membership count/hash, missing documents, text template, and estimated/resident index sizes. Catalog mode, profile selection, seed, and distractor target are configuration-hashed. Compact metrics must never be described as full-catalog metrics.
 
 ## 9. Data Model
 
@@ -1022,7 +1023,8 @@ Required checks:
 - complete group/profile nesting;
 - duplicate/conflicting product/judgment handling;
 - nonempty queries/documents and one product join per judgment/candidate;
-- catalog membership matches the label-value-independent predicate;
+- catalog membership matches the named full or required-judged-plus-label-blind-distractor
+  predicate and its persisted selection counts;
 - training population contains only included judged groups and audited exclusions;
 - label/gain mappings and protocol IDs are valid;
 - candidate keys, finite scores, ranks, deduplication, and bounds;

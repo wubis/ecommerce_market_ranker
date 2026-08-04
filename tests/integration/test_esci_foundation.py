@@ -21,7 +21,9 @@ from market_rank.data.esci_raw import (
 from market_rank.data.foundation import (
     CATALOG_EXCLUSIONS_FILENAME,
     CATALOG_MEMBERSHIP_FILENAME,
+    COMPACT_CATALOG_ID,
     FOUNDATION_MANIFEST_FILENAME,
+    FULL_CATALOG_ID,
     JUDGED_POOLS_FILENAME,
     JUDGMENTS_FILENAME,
     PRODUCT_DOCUMENTS_FILENAME,
@@ -37,7 +39,6 @@ from market_rank.data.foundation import (
 from market_rank.data.profiles import build_esci_profiles
 from tests.unit.test_esci_profiles import (
     BASE_CONFIG,
-    _config,
     _examples,
     _release,
     _write_raw,
@@ -46,20 +47,29 @@ from tests.unit.test_esci_profiles import (
 RETRIEVED_UTC = datetime(2026, 8, 3, 16, 0, tzinfo=UTC)
 
 
-def _foundation_config(*, blocked: bool = False) -> ResolvedConfig:
-    if not blocked:
-        return _config()
-    return load_config(
-        [BASE_CONFIG],
-        overrides={
-            "runtime.seed": 42,
-            "runtime.rss_limit_mb": 512,
-            "dataset.train_basis_points": 5000,
-            "dataset.development_query_groups": 3,
-            "dataset.portfolio_query_groups": 6,
-            "dataset.m2_runtime_reserve_mb": 512,
-        },
-    )
+def _foundation_config(
+    *,
+    blocked: bool = False,
+    compact_distractors: int | None = None,
+    catalog_mode: str = "compact",
+) -> ResolvedConfig:
+    overrides: dict[str, object] = {
+        "runtime.seed": 42,
+        "dataset.train_basis_points": 5000,
+        "dataset.development_query_groups": 3,
+        "dataset.portfolio_query_groups": 6,
+        "dataset.catalog_mode": catalog_mode,
+    }
+    if blocked:
+        overrides.update(
+            {
+                "runtime.rss_limit_mb": 512,
+                "dataset.m2_runtime_reserve_mb": 512,
+            }
+        )
+    if compact_distractors is not None:
+        overrides["dataset.compact_catalog_distractor_products"] = compact_distractors
+    return load_config([BASE_CONFIG], overrides=overrides)
 
 
 def _prepare_foundation(
@@ -69,8 +79,14 @@ def _prepare_foundation(
     relabel: bool = False,
     conflicting_judgment: bool = False,
     blocked: bool = False,
+    compact_distractors: int | None = None,
+    catalog_mode: str = "compact",
 ) -> tuple[ResolvedReleaseManifest, ResolvedConfig, Path, ArtifactStore]:
-    config = _foundation_config(blocked=blocked)
+    config = _foundation_config(
+        blocked=blocked,
+        compact_distractors=compact_distractors,
+        catalog_mode=catalog_mode,
+    )
     if conflicting_judgment:
         config = load_config(
             [BASE_CONFIG],
@@ -177,19 +193,43 @@ def test_builds_verified_canonical_tables_with_profile_parent(tmp_path: Path) ->
     )
 
 
-def test_catalog_uses_full_label_blind_task1_population_not_portfolio(tmp_path: Path) -> None:
-    result = _build(_prepare_foundation(tmp_path))
+def test_compact_catalog_retains_judged_products_and_samples_label_blind_distractors(
+    tmp_path: Path,
+) -> None:
+    result = _build(_prepare_foundation(tmp_path, compact_distractors=2))
     judgments = pl.read_parquet(result.artifact.path / JUDGMENTS_FILENAME)
+    membership = pl.read_parquet(result.artifact.path / CATALOG_MEMBERSHIP_FILENAME)
+    exclusions = pl.read_parquet(result.artifact.path / CATALOG_EXCLUSIONS_FILENAME)
+    selected_keys = pl.concat(
+        (
+            membership.select("locale", "product_id"),
+            exclusions.select("locale", "product_id"),
+        )
+    )
+    required_keys = judgments.select("locale", "product_id").unique()
 
+    assert result.manifest.catalog_id == COMPACT_CATALOG_ID
+    assert result.manifest.catalog_selection.source_products == 18
+    assert result.manifest.catalog_selection.required_judged_products == required_keys.height
+    assert result.manifest.catalog_selection.selected_distractor_products == 2
+    assert result.manifest.catalog_candidate_products == required_keys.height + 2
+    assert required_keys.join(selected_keys, on=("locale", "product_id"), how="anti").is_empty()
+
+
+def test_full_catalog_mode_preserves_every_task1_source_product(tmp_path: Path) -> None:
+    result = _build(_prepare_foundation(tmp_path, catalog_mode="full"))
+
+    assert result.manifest.catalog_id == FULL_CATALOG_ID
+    assert result.manifest.catalog_selection.mode == "full"
+    assert result.manifest.catalog_selection.source_products == 18
     assert result.manifest.catalog_candidate_products == 18
-    assert result.manifest.catalog_products == 17
-    assert result.manifest.catalog_excluded_no_text == 1
-    assert result.manifest.catalog_candidate_products > judgments["product_id"].n_unique()
 
 
 def test_catalog_membership_is_independent_of_label_values(tmp_path: Path) -> None:
-    first = _build(_prepare_foundation(tmp_path / "first"))
-    relabeled = _build(_prepare_foundation(tmp_path / "relabeled", relabel=True))
+    first = _build(_prepare_foundation(tmp_path / "first", compact_distractors=2))
+    relabeled = _build(
+        _prepare_foundation(tmp_path / "relabeled", relabel=True, compact_distractors=2)
+    )
     first_membership = pl.read_parquet(first.artifact.path / CATALOG_MEMBERSHIP_FILENAME)
     relabeled_membership = pl.read_parquet(relabeled.artifact.path / CATALOG_MEMBERSHIP_FILENAME)
 
@@ -197,8 +237,10 @@ def test_catalog_membership_is_independent_of_label_values(tmp_path: Path) -> No
 
 
 def test_canonical_outputs_are_stable_under_raw_row_reordering(tmp_path: Path) -> None:
-    first = _build(_prepare_foundation(tmp_path / "first"))
-    reordered = _build(_prepare_foundation(tmp_path / "reordered", reverse=True))
+    first = _build(_prepare_foundation(tmp_path / "first", compact_distractors=2))
+    reordered = _build(
+        _prepare_foundation(tmp_path / "reordered", reverse=True, compact_distractors=2)
+    )
 
     for filename in (
         QUERIES_FILENAME,

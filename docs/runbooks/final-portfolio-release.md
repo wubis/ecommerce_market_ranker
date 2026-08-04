@@ -8,6 +8,11 @@ after this point without declaring a new evaluation generation.
 
 ## 2. Build the portfolio lineage
 
+Before starting, confirm the resolved dataset configuration uses the intended catalog. The default
+is the Goldfish 016A compact benchmark: all portfolio-judged products plus 100,000 deterministic
+label-blind distractors. Never mix full and compact artifacts or describe compact output as full
+catalog.
+
 Run each stage in its own fresh process so macOS can reclaim memory:
 
 ```bash
@@ -89,4 +94,3 @@ reuses the immutable release artifact.
 | Test finalization RSS failure | Preserve the failure, profile load order/representations, and create a reviewed new generation; do not tune quality from test. |
 | Report artifact corruption | Remove only the corrupt generated release artifact and rebuild from its exact verified parents. |
 | Unexpected weak/negative test result | Publish it honestly. Do not change the champion or hide the comparison. Future work requires a new named generation. |
-

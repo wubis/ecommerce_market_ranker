@@ -104,7 +104,7 @@ reclaim memory between stages.
 
 - embeds a nonblank query with the exact compatible encoder;
 - validates finite unit-normalized query output;
-- performs exact FlatIP search over the full fixed catalog;
+- performs exact FlatIP search over the resolved named full or compact fixed catalog;
 - sorts by descending score and then lexical product ID for deterministic boundary ties;
 - returns finite scores, contiguous one-based ranks, immutable retriever/index IDs, and measured
   end-to-end dense latency for the request.

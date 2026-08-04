@@ -38,9 +38,11 @@ from market_rank.data.profiles import (
     profile_artifact_id,
 )
 
-FOUNDATION_COMPONENT_VERSION = "data-foundation-v1"
+FOUNDATION_COMPONENT_VERSION = "data-foundation-v2"
 FOUNDATION_MANIFEST_FILENAME = "foundation-manifest.json"
-CATALOG_ID: Literal["esci_task1_us_catalog_v1"] = "esci_task1_us_catalog_v1"
+FULL_CATALOG_ID: Literal["esci_task1_us_catalog_v1"] = "esci_task1_us_catalog_v1"
+COMPACT_CATALOG_ID: Literal["esci_task1_us_compact_catalog_v1"] = "esci_task1_us_compact_catalog_v1"
+CatalogId = Literal["esci_task1_us_catalog_v1", "esci_task1_us_compact_catalog_v1"]
 JUDGED_POOL_ID: Literal["esci_task1_us_judged_pool_v1"] = "esci_task1_us_judged_pool_v1"
 LABEL_MAPPING_ID: Literal["esci-label-id-v1"] = "esci-label-id-v1"
 GAIN_MAPPING_ID: Literal["esci-task1-gain-v1"] = "esci-task1-gain-v1"
@@ -126,6 +128,42 @@ class ProfilePoolSummary(_StrictModel):
     project_test_query_ids: int = Field(strict=True, ge=0)
 
 
+class CatalogSelectionSummary(_StrictModel):
+    """Label-blind fixed-catalog selection and audit counts."""
+
+    mode: Literal["full", "compact"]
+    method: Literal["full-task1-us-v1", "portfolio-judged-plus-sha256-v1"]
+    source_products: int = Field(strict=True, ge=1)
+    required_judged_products: int = Field(strict=True, ge=1)
+    selected_distractor_products: int = Field(strict=True, ge=0)
+    configured_distractor_products: int = Field(strict=True, ge=0)
+    selected_candidate_products: int = Field(strict=True, ge=1)
+
+    @model_validator(mode="after")
+    def validate_selection(self) -> Self:
+        available_distractors = self.source_products - self.required_judged_products
+        if available_distractors < 0:
+            raise ValueError("required judged products exceed the source catalog")
+        if self.selected_candidate_products != (
+            self.required_judged_products + self.selected_distractor_products
+        ):
+            raise ValueError("catalog candidates do not equal required plus distractor products")
+        if self.mode == "full":
+            if (
+                self.method != "full-task1-us-v1"
+                or self.selected_candidate_products != self.source_products
+                or self.selected_distractor_products != available_distractors
+            ):
+                raise ValueError("full catalog selection does not retain every source product")
+        elif (
+            self.method != "portfolio-judged-plus-sha256-v1"
+            or self.selected_distractor_products
+            != min(self.configured_distractor_products, available_distractors)
+        ):
+            raise ValueError("compact catalog selection does not match its deterministic target")
+        return self
+
+
 class ResourceEstimate(_StrictModel):
     """Transparent M2 preliminary serving-memory estimate and proceed/block decision."""
 
@@ -168,7 +206,7 @@ class FoundationCheck(_StrictModel):
 class DataFoundationManifest(_StrictModel):
     """Lineage, populations, mappings, tables, and resource gate for Goldfish 006."""
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     dataset_version: str = Field(strict=True, min_length=1)
     source_revision: str = Field(strict=True, min_length=1)
     release_manifest_sha256: Sha256Digest
@@ -178,7 +216,8 @@ class DataFoundationManifest(_StrictModel):
     benchmark_predicate: Literal["product_locale == 'us' and small_version == 1"] = (
         "product_locale == 'us' and small_version == 1"
     )
-    catalog_id: Literal["esci_task1_us_catalog_v1"] = CATALOG_ID
+    catalog_id: CatalogId
+    catalog_selection: CatalogSelectionSummary
     catalog_candidate_products: int = Field(strict=True, ge=1)
     catalog_products: int = Field(strict=True, ge=1)
     catalog_excluded_no_text: int = Field(strict=True, ge=0)
@@ -197,6 +236,13 @@ class DataFoundationManifest(_StrictModel):
 
     @model_validator(mode="after")
     def validate_collections(self) -> Self:
+        expected_catalog_id = (
+            COMPACT_CATALOG_ID if self.catalog_selection.mode == "compact" else FULL_CATALOG_ID
+        )
+        if self.catalog_id != expected_catalog_id:
+            raise ValueError("catalog ID does not match the selected catalog mode")
+        if self.catalog_candidate_products != self.catalog_selection.selected_candidate_products:
+            raise ValueError("catalog candidate count does not match the selection audit")
         if tuple(table.filename for table in self.tables) != _TABLE_ORDER:
             raise ValueError("tables are not in the canonical Goldfish 006 order")
         if tuple(pool.profile for pool in self.pools) != ("development", "portfolio"):
@@ -256,6 +302,17 @@ def _normalize_attribute(value: str | None, *, max_chars: int) -> str | None:
 
 
 def _document_sha256(value: str) -> str:
+    return sha256(value.encode("utf-8")).hexdigest()
+
+
+def catalog_id_for_config(config: ResolvedConfig) -> CatalogId:
+    """Return the explicit full or compact fixed-catalog identity."""
+    return (
+        COMPACT_CATALOG_ID if config.config.dataset.catalog_mode == "compact" else FULL_CATALOG_ID
+    )
+
+
+def _catalog_priority(value: str) -> str:
     return sha256(value.encode("utf-8")).hexdigest()
 
 
@@ -450,7 +507,7 @@ def _write_tables(
     raw_paths: dict[str, Path],
     assignments: pl.DataFrame,
     config: ResolvedConfig,
-) -> None:
+) -> CatalogSelectionSummary:
     task_examples = pl.scan_parquet(raw_paths["examples"]).filter(
         (pl.col("product_locale") == "us") & (pl.col("small_version") == 1)
     )
@@ -566,7 +623,60 @@ def _write_tables(
     )
     _sink(judgments, root / JUDGMENTS_FILENAME)
 
-    catalog_keys = task_examples.select("product_locale", "product_id").unique()
+    source_catalog_keys = task_examples.select("product_locale", "product_id").unique()
+    required_catalog_keys = selected_examples.select("product_locale", "product_id").unique()
+    dataset = config.config.dataset
+    source_products = _collect_scalar(source_catalog_keys.select(pl.len().alias("value")))
+    required_products = _collect_scalar(required_catalog_keys.select(pl.len().alias("value")))
+    if dataset.catalog_mode == "compact":
+        distractors = (
+            source_catalog_keys.join(
+                required_catalog_keys,
+                on=("product_locale", "product_id"),
+                how="anti",
+            )
+            .with_columns(
+                pl.concat_str(
+                    pl.lit(dataset.catalog_selection_version),
+                    pl.lit(str(config.config.runtime.seed)),
+                    pl.col("product_locale"),
+                    pl.col("product_id"),
+                    separator="\0",
+                )
+                .map_elements(_catalog_priority, return_dtype=pl.String)
+                .alias("_selection_priority")
+            )
+            .sort("_selection_priority", "product_locale", "product_id")
+            .head(dataset.compact_catalog_distractor_products)
+            .select("product_locale", "product_id")
+        )
+        catalog_keys = (
+            pl.concat((required_catalog_keys, distractors))
+            .unique()
+            .sort("product_locale", "product_id")
+        )
+        selection_method: Literal["full-task1-us-v1", "portfolio-judged-plus-sha256-v1"] = (
+            "portfolio-judged-plus-sha256-v1"
+        )
+    else:
+        catalog_keys = source_catalog_keys.sort("product_locale", "product_id")
+        selection_method = "full-task1-us-v1"
+    try:
+        selected_catalog_keys = catalog_keys.collect(engine="streaming")
+    except pl.exceptions.PolarsError as exc:
+        raise FoundationInvariantError(f"cannot select the fixed catalog: {exc}") from exc
+    selected_products = selected_catalog_keys.height
+    catalog_keys = selected_catalog_keys.lazy()
+    selected_distractors = selected_products - required_products
+    selection = CatalogSelectionSummary(
+        mode=dataset.catalog_mode,
+        method=selection_method,
+        source_products=source_products,
+        required_judged_products=required_products,
+        selected_distractor_products=selected_distractors,
+        configured_distractor_products=dataset.compact_catalog_distractor_products,
+        selected_candidate_products=selected_products,
+    )
     raw_products = pl.scan_parquet(raw_paths["products"])
     missing_products = _collect_scalar(
         catalog_keys.join(
@@ -580,7 +690,6 @@ def _write_tables(
             f"{missing_products} Task-1 catalog products lack official product rows"
         )
 
-    dataset = config.config.dataset
     products = (
         raw_products.join(catalog_keys, on=("product_locale", "product_id"), how="inner")
         .with_columns(
@@ -691,18 +800,19 @@ def _write_tables(
         .sort("locale", "product_id")
     )
     _sink(documents, root / PRODUCT_DOCUMENTS_FILENAME)
+    catalog_id = catalog_id_for_config(config)
     membership = (
         pl.scan_parquet(root / PRODUCT_DOCUMENTS_FILENAME)
         .select("locale", "product_id", "document_sha256")
         .with_row_index("catalog_ordinal")
-        .with_columns(pl.lit(CATALOG_ID).alias("catalog_id"))
+        .with_columns(pl.lit(catalog_id).alias("catalog_id"))
         .select("catalog_id", "catalog_ordinal", "locale", "product_id", "document_sha256")
     )
     _sink(membership, root / CATALOG_MEMBERSHIP_FILENAME)
     exclusions = (
         canonical_products.filter(~pl.col("has_usable_text"))
         .select(
-            pl.lit(CATALOG_ID).alias("catalog_id"),
+            pl.lit(catalog_id).alias("catalog_id"),
             pl.col("product_locale").alias("locale"),
             "product_id",
             pl.lit("no_usable_source_text").alias("reason"),
@@ -734,6 +844,7 @@ def _write_tables(
         .sort("profile", "project_split", "query_id", "stable_ordinal", "product_id")
     )
     _sink(pools, root / JUDGED_POOLS_FILENAME)
+    return selection
 
 
 _PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
@@ -753,6 +864,7 @@ def _build_manifest(
     release: ResolvedReleaseManifest,
     config: ResolvedConfig,
     profile_artifact: LoadedArtifact,
+    catalog_selection: CatalogSelectionSummary,
 ) -> DataFoundationManifest:
     tables = tuple(
         _table_summary(root / filename, _PRIMARY_KEYS[filename]) for filename in _TABLE_ORDER
@@ -761,6 +873,10 @@ def _build_manifest(
     candidate_products = by_name[PRODUCTS_FILENAME].row_count
     catalog_products = by_name[CATALOG_MEMBERSHIP_FILENAME].row_count
     excluded_products = by_name[CATALOG_EXCLUSIONS_FILENAME].row_count
+    if candidate_products != catalog_selection.selected_candidate_products:
+        raise FoundationInvariantError(
+            "persisted catalog candidates differ from the selection audit"
+        )
     if candidate_products != catalog_products + excluded_products:
         raise FoundationInvariantError(
             "catalog candidates do not partition into membership and no-text exclusions"
@@ -774,6 +890,16 @@ def _build_manifest(
     )
     queries = by_name[QUERIES_FILENAME].row_count
     judgments = by_name[JUDGMENTS_FILENAME].row_count
+    required_judged_products = _collect_scalar(
+        pl.scan_parquet(root / JUDGMENTS_FILENAME)
+        .select("locale", "product_id")
+        .unique()
+        .select(pl.len().alias("value"))
+    )
+    if required_judged_products != catalog_selection.required_judged_products:
+        raise FoundationInvariantError(
+            "compact catalog does not retain every portfolio judged product"
+        )
     if pools[1].query_ids != queries or pools[1].judgments != judgments:
         raise FoundationInvariantError("portfolio pool is not complete for canonical tables")
     checks = tuple(
@@ -784,6 +910,14 @@ def _build_manifest(
                     detail=(
                         f"{candidate_products} candidates partition into {catalog_products} "
                         f"documents and {excluded_products} exclusions"
+                    ),
+                ),
+                FoundationCheck(
+                    check_id="catalog_selection",
+                    detail=(
+                        f"{catalog_selection.required_judged_products} required judged products "
+                        f"plus {catalog_selection.selected_distractor_products} deterministic "
+                        f"distractors selected from {catalog_selection.source_products} products"
                     ),
                 ),
                 FoundationCheck(
@@ -816,6 +950,8 @@ def _build_manifest(
         config_sha256=config.sha256,
         profile_artifact_id=profile_artifact.manifest.artifact_id,
         profile_manifest_sha256=profile_artifact.manifest_sha256,
+        catalog_id=catalog_id_for_config(config),
+        catalog_selection=catalog_selection,
         catalog_candidate_products=candidate_products,
         catalog_products=catalog_products,
         catalog_excluded_no_text=excluded_products,
@@ -907,8 +1043,8 @@ def build_esci_foundation(
         ) as transaction:
             first_output = transaction.path(QUERIES_FILENAME)
             root = first_output.parent
-            _write_tables(root, raw_paths, assignments, config)
-            manifest = _build_manifest(root, release, config, profile_artifact)
+            catalog_selection = _write_tables(root, raw_paths, assignments, config)
+            manifest = _build_manifest(root, release, config, profile_artifact, catalog_selection)
             transaction.path(FOUNDATION_MANIFEST_FILENAME).write_text(
                 _canonical_json(manifest), encoding="utf-8"
             )
@@ -920,16 +1056,19 @@ def build_esci_foundation(
 
 __all__ = [
     "CATALOG_EXCLUSIONS_FILENAME",
-    "CATALOG_ID",
     "CATALOG_MEMBERSHIP_FILENAME",
+    "COMPACT_CATALOG_ID",
     "FOUNDATION_COMPONENT_VERSION",
     "FOUNDATION_MANIFEST_FILENAME",
+    "FULL_CATALOG_ID",
     "JUDGED_POOLS_FILENAME",
     "JUDGMENTS_FILENAME",
     "PRODUCTS_FILENAME",
     "PRODUCT_DOCUMENTS_FILENAME",
     "QUERIES_FILENAME",
     "SOURCES_FILENAME",
+    "CatalogId",
+    "CatalogSelectionSummary",
     "DataFoundationError",
     "DataFoundationManifest",
     "FoundationBuildResult",
@@ -939,6 +1078,7 @@ __all__ = [
     "ResourceEstimate",
     "ResourceGateError",
     "build_esci_foundation",
+    "catalog_id_for_config",
     "foundation_artifact_id",
     "load_foundation_manifest",
 ]

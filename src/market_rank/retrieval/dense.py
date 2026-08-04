@@ -41,6 +41,7 @@ from market_rank.data.foundation import (
     FOUNDATION_MANIFEST_FILENAME,
     PRODUCT_DOCUMENTS_FILENAME,
     QUERIES_FILENAME,
+    CatalogId,
     DataFoundationManifest,
     foundation_artifact_id,
     load_foundation_manifest,
@@ -158,7 +159,7 @@ class DenseIndexMetadata(_StrictModel):
     config_sha256: Sha256Digest
     foundation_artifact_id: str = Field(strict=True, min_length=1)
     foundation_manifest_sha256: Sha256Digest
-    catalog_id: Literal["esci_task1_us_catalog_v1"]
+    catalog_id: CatalogId
     catalog_membership_sha256: Sha256Digest
     product_document_version: Literal["product-document-v1"]
     component_version: Literal["minilm-l6-v2-flatip-v1"]

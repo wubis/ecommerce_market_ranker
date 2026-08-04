@@ -365,6 +365,14 @@ def test_portfolio_report_defaults_require_test_screenshots_and_clean_reproducti
     )
 
 
+def test_dataset_defaults_to_audited_compact_catalog() -> None:
+    dataset = load_config([BASE_CONFIG]).config.dataset
+
+    assert dataset.catalog_mode == "compact"
+    assert dataset.catalog_selection_version == "portfolio-judged-plus-sha256-v1"
+    assert dataset.compact_catalog_distractor_products == 100000
+
+
 def test_portfolio_report_rejects_noncanonical_screenshot_contract() -> None:
     with pytest.raises(ConfigValidationError, match="canonical ordered filenames"):
         load_config(

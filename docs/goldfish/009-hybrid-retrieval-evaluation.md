@@ -84,7 +84,7 @@ profiles.
 All three stages use:
 
 - the identical profile query IDs and normalized query texts;
-- the identical fixed `esci_task1_us_catalog_v1` membership;
+- the identical named full or compact fixed-catalog membership;
 - the identical Goldfish 006 judgment set per query;
 - the same cutoffs, relevance thresholds, and protocol;
 - explicit rows for empty retrieval results.

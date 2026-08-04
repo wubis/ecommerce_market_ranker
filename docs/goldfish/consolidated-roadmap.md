@@ -14,7 +14,7 @@ tested, documented, reproducible, and independently reviewable.
 
 | Scope | Target |
 |---|---:|
-| Current implemented sequence | Through Goldfish 016 |
+| Current implemented sequence | Through Goldfish 016A |
 | Core portfolio-ready project | Goldfish 016 |
 | Remaining core Goldfishes | 0 |
 | Optional neural and diversity extensions | Goldfish 017–018 |
@@ -22,6 +22,10 @@ tested, documented, reproducible, and independently reviewable.
 Goldfish 004A is an additional completed extension even though it does not advance the primary
 integer numbering. The recommended plan therefore concerns the remaining numbered stages and
 does not attempt to renumber prior work.
+
+Goldfish 016A is a completed resource extension. It preserves complete portfolio judged pools but
+uses a named deterministic compact retrieval catalog containing every required judged product and
+100,000 label-blind distractors by default. Compact evidence is never called full-catalog evidence.
 
 The expanded plan targeted roughly ten subsystem-sized stages beginning with Goldfish 007. All ten
 core stages are now implemented. That sizing keeps dense

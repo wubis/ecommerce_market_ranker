@@ -73,6 +73,11 @@ class DatasetConfig(_StrictModel):
     train_basis_points: int = Field(default=8500, strict=True, ge=1, le=9999)
     development_query_groups: int = Field(default=5000, strict=True, ge=1)
     portfolio_query_groups: int = Field(default=20000, strict=True, ge=1)
+    catalog_mode: Literal["full", "compact"] = "compact"
+    catalog_selection_version: Literal["portfolio-judged-plus-sha256-v1"] = (
+        "portfolio-judged-plus-sha256-v1"
+    )
+    compact_catalog_distractor_products: int = Field(default=100000, strict=True, ge=0, le=2000000)
     product_document_version: Literal["product-document-v1"] = "product-document-v1"
     title_max_chars: int = Field(default=512, strict=True, ge=32, le=4096)
     brand_max_chars: int = Field(default=128, strict=True, ge=16, le=1024)

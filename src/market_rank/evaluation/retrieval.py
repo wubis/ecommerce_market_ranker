@@ -36,6 +36,7 @@ from market_rank.data.foundation import (
     FOUNDATION_MANIFEST_FILENAME,
     JUDGED_POOLS_FILENAME,
     QUERIES_FILENAME,
+    CatalogId,
     DataFoundationManifest,
     foundation_artifact_id,
     load_foundation_manifest,
@@ -174,7 +175,7 @@ class RetrievalEvaluationManifest(_StrictModel):
     profile: Profile
     protocol: Literal["retrieval_catalog_task1_us_v1"] = RETRIEVAL_PROTOCOL
     population_id: str = Field(strict=True, min_length=1)
-    catalog_id: Literal["esci_task1_us_catalog_v1"]
+    catalog_id: CatalogId
     catalog_membership_sha256: Sha256Digest
     foundation_artifact_id: str = Field(strict=True, min_length=1)
     foundation_manifest_sha256: Sha256Digest

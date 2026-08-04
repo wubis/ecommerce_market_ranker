@@ -24,7 +24,7 @@ raw files before transformation.
 ## Artifact Contract
 
 ```text
-data-foundation/<dataset-version>/portfolio/data-foundation-v1/<config-sha256>/
+data-foundation/<dataset-version>/portfolio/data-foundation-v2/<config-sha256>/
 ├── queries.parquet
 ├── sources.parquet
 ├── judgments.parquet
@@ -68,10 +68,12 @@ each complete query group deterministic contiguous ranking order.
 
 ### Fixed catalog and products
 
-Catalog candidates are distinct product keys referenced by the full release-wide Task-1 US
-predicate across official train and test. Profile membership and label values are never read
-for catalog selection. This keeps `esci_task1_us_catalog_v1` identical across development and
-portfolio experiments.
+Catalog source candidates are distinct product keys referenced by the full release-wide Task-1 US
+predicate across official train and test. Label values are never read for catalog selection. Full
+mode retains them all as `esci_task1_us_catalog_v1`. Compact mode uses
+`esci_task1_us_compact_catalog_v1`: every portfolio-judged product plus a seeded SHA-256 sample of
+additional label-blind distractors. Development and portfolio experiments always share the same
+membership within one resolved configuration. Goldfish 016A defines the compact claim boundary.
 
 Candidate keys join exactly one official product. `products.parquet` retains official nullable
 fields and separate derived clean text, normalized brand/color, missingness flags, and document
@@ -154,7 +156,8 @@ protocol-safe ranking/retrieval metric framework needed to evaluate it.
 2. Queries/judgments contain only complete non-quarantined portfolio groups and preserve nested
    development membership.
 3. Label IDs and official gains are mapped separately and exactly.
-4. Fixed catalog membership uses all Task-1 US product participation and no label/profile value.
+4. Full mode retains all Task-1 US product participation; compact mode retains all
+   portfolio-judged products plus deterministic label-blind distractors and records both counts.
 5. Product joins are exact; no-text candidates are excluded with an audit.
 6. Documents satisfy normalization, HTML/control removal, caps, template, and hash contracts.
 7. Development judged rows are an exact subset of complete portfolio judged rows.
