@@ -10,7 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 CLOSED_POOL_PROTOCOL: Literal["closed_pool_task1_v1"] = "closed_pool_task1_v1"
 RETRIEVAL_PROTOCOL: Literal["retrieval_catalog_task1_us_v1"] = "retrieval_catalog_task1_us_v1"
-MetricProtocol = Literal["closed_pool_task1_v1", "retrieval_catalog_task1_us_v1"]
+END_TO_END_PROTOCOL: Literal["end_to_end_diagnostic_v1"] = "end_to_end_diagnostic_v1"
+MetricProtocol = Literal[
+    "closed_pool_task1_v1",
+    "retrieval_catalog_task1_us_v1",
+    "end_to_end_diagnostic_v1",
+]
 EsciLabel = Literal["I", "C", "S", "E"]
 
 _OFFICIAL_GAINS: dict[EsciLabel, float] = {"I": 0.0, "C": 0.01, "S": 0.1, "E": 1.0}
@@ -169,6 +174,7 @@ def _closed_pool_metrics(
 
 
 def _retrieval_metrics(
+    protocol: Literal["retrieval_catalog_task1_us_v1", "end_to_end_diagnostic_v1"],
     ranked: tuple[str, ...],
     judgments: dict[str, Judgment],
     k: int,
@@ -195,9 +201,9 @@ def _retrieval_metrics(
         "relevant_judgment_count": relevant_count,
     }
     return (
-        _record(RETRIEVAL_PROTOCOL, "judged_recall", k, recall, **common),
+        _record(protocol, "judged_recall", k, recall, **common),
         _record(
-            RETRIEVAL_PROTOCOL,
+            protocol,
             "exact_hit",
             k,
             float(
@@ -208,10 +214,10 @@ def _retrieval_metrics(
             ),
             **common,
         ),
-        _record(RETRIEVAL_PROTOCOL, "judged_mrr", k, judged_mrr, **common),
-        _record(RETRIEVAL_PROTOCOL, "known_judgment_coverage", k, known_coverage, **common),
+        _record(protocol, "judged_mrr", k, judged_mrr, **common),
+        _record(protocol, "known_judgment_coverage", k, known_coverage, **common),
         _record(
-            RETRIEVAL_PROTOCOL,
+            protocol,
             "unjudged_rate",
             k,
             unjudged_count / len(head) if head else 0.0,
@@ -236,13 +242,14 @@ def evaluate_ranked_products(
     judgment_by_product = _judgment_map(judgments)
     if protocol == CLOSED_POOL_PROTOCOL:
         return _closed_pool_metrics(ranked, judgment_by_product, k, relevant_labels)
-    if protocol == RETRIEVAL_PROTOCOL:
-        return _retrieval_metrics(ranked, judgment_by_product, k, relevant_labels)
+    if protocol in (RETRIEVAL_PROTOCOL, END_TO_END_PROTOCOL):
+        return _retrieval_metrics(protocol, ranked, judgment_by_product, k, relevant_labels)
     raise MetricProtocolError(f"unsupported metric protocol: {protocol}")
 
 
 __all__ = [
     "CLOSED_POOL_PROTOCOL",
+    "END_TO_END_PROTOCOL",
     "RETRIEVAL_PROTOCOL",
     "Judgment",
     "MetricProtocolError",

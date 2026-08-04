@@ -14,19 +14,19 @@ tested, documented, reproducible, and independently reviewable.
 
 | Scope | Target |
 |---|---:|
-| Current implemented sequence | Through Goldfish 011 |
+| Current implemented sequence | Through Goldfish 012 |
 | Core portfolio-ready project | Goldfish 016 |
-| Remaining core Goldfishes | Approximately 5 |
+| Remaining core Goldfishes | Approximately 4 |
 | Optional neural and diversity extensions | Goldfish 017–018 |
 
 Goldfish 004A is an additional completed extension even though it does not advance the primary
 integer numbering. The recommended plan therefore concerns the remaining numbered stages and
 does not attempt to renumber prior work.
 
-Finishing the core in roughly 10 more Goldfishes is aggressive but credible. Fewer than about
-eight would create risky, difficult-to-review steps around dense retrieval, features, training,
-evaluation, and serving. More than about twelve would likely recreate the fragmentation this
-consolidated plan is intended to avoid.
+The expanded plan targeted roughly ten subsystem-sized stages beginning with Goldfish 007. Six
+of those stages are now implemented and four core stages remain. That sizing keeps dense
+retrieval, features, training, evaluation, serving, demo, and qualification independently
+reviewable without returning to the earlier fragmentation.
 
 ## Remaining Core Sequence
 
@@ -71,6 +71,8 @@ LambdaMART models, enforce official gains, support early stopping, persist model
 lineage, and verify serialization/reload prediction parity.
 
 ### Goldfish 012 — Ranking Evaluation and Champion Selection
+
+**Status: Implemented.**
 
 Implement closed-pool and end-to-end ranking evaluation, required ablations, query-level
 bootstrap intervals, slices and failure analysis, protocol identifiers, experiment records,

@@ -255,6 +255,36 @@ class RankerTrainingConfig(_StrictModel):
         return self
 
 
+class RankingEvaluationConfig(_StrictModel):
+    """Protocol-safe ranking evaluation and validation-only promotion controls."""
+
+    component_version: Literal["ranking-eval-v1"] = "ranking-eval-v1"
+    selection_split: Literal["validation"] = "validation"
+    closed_cutoffs: tuple[int, ...] = (10, 20)
+    diagnostic_cutoffs: tuple[int, ...] = (10, 100)
+    minimum_model_improvement: float = Field(default=0.0, strict=True, ge=0.0, le=1.0)
+    material_regression_tolerance: float = Field(default=0.005, strict=True, ge=0.0, le=0.25)
+    selection_tie_tolerance: float = Field(default=1e-12, strict=True, ge=0.0, le=0.01)
+    failure_analysis_queries: int = Field(default=20, strict=True, ge=1, le=1000)
+    max_closed_rows: int = Field(default=200000, strict=True, ge=1, le=500000)
+    max_candidate_rows: int = Field(default=200000, strict=True, ge=1, le=500000)
+
+    @model_validator(mode="after")
+    def validate_ranking_evaluation(self) -> Self:
+        for name, cutoffs in (
+            ("closed", self.closed_cutoffs),
+            ("diagnostic", self.diagnostic_cutoffs),
+        ):
+            if not cutoffs or any(
+                not isinstance(cutoff, int) or isinstance(cutoff, bool) or cutoff < 1
+                for cutoff in cutoffs
+            ):
+                raise ValueError(f"{name} ranking-evaluation cutoffs must be positive integers")
+            if cutoffs != tuple(sorted(set(cutoffs))):
+                raise ValueError(f"{name} ranking-evaluation cutoffs must be unique and sorted")
+        return self
+
+
 class LoggingConfig(_StrictModel):
     """Safe local logging defaults."""
 
@@ -276,6 +306,7 @@ class AppConfig(_StrictModel):
     query_understanding: QueryUnderstandingConfig = QueryUnderstandingConfig()
     ranking_features: RankingFeatureConfig = RankingFeatureConfig()
     ranker_training: RankerTrainingConfig = RankerTrainingConfig()
+    ranking_evaluation: RankingEvaluationConfig = RankingEvaluationConfig()
     logging: LoggingConfig = LoggingConfig()
 
     @model_validator(mode="after")
@@ -461,6 +492,7 @@ __all__ = [
     "ProjectConfig",
     "QueryUnderstandingConfig",
     "RankerTrainingConfig",
+    "RankingEvaluationConfig",
     "RankingFeatureConfig",
     "ResolvedConfig",
     "RetrievalConfig",

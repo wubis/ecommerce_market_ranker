@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from market_rank.evaluation.metrics import (
     CLOSED_POOL_PROTOCOL,
+    END_TO_END_PROTOCOL,
     RETRIEVAL_PROTOCOL,
     Judgment,
     MetricProtocolError,
@@ -92,6 +93,24 @@ def test_catalog_retrieval_metrics_do_not_emit_naive_precision_map_or_ndcg() -> 
     assert values["known_judgment_coverage"] == 0.5
     assert values["unjudged_rate"] == 0.5
     assert all(record.unjudged_count == 2 for record in records)
+
+
+def test_end_to_end_diagnostic_reuses_only_retrieval_safe_metrics() -> None:
+    records = evaluate_ranked_products(
+        END_TO_END_PROTOCOL,
+        ("unknown", "exact", "substitute"),
+        _judgments(),
+        k=3,
+    )
+
+    assert {record.metric for record in records} == {
+        "judged_recall",
+        "exact_hit",
+        "judged_mrr",
+        "known_judgment_coverage",
+        "unjudged_rate",
+    }
+    assert all(record.protocol == END_TO_END_PROTOCOL for record in records)
 
 
 def test_empty_catalog_result_remains_in_evaluation_with_zero_metrics() -> None:

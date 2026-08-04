@@ -96,6 +96,17 @@ ranker_training:
   max_validation_rows: 200000
   reload_parity_rows: 128
   explanation_rows: 64
+ranking_evaluation:
+  component_version: ranking-eval-v1
+  selection_split: validation
+  closed_cutoffs: [10, 20]
+  diagnostic_cutoffs: [10, 100]
+  minimum_model_improvement: 0.0
+  material_regression_tolerance: 0.005
+  selection_tie_tolerance: 1.0e-12
+  failure_analysis_queries: 20
+  max_closed_rows: 200000
+  max_candidate_rows: 200000
 logging:
   level: INFO
   format: json

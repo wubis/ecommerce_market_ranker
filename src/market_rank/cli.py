@@ -14,6 +14,7 @@ from market_rank.data.download import DownloadPolicy, download_validate_esci
 from market_rank.data.esci_raw import RawDataError, RawDataValidationError, load_release_manifest
 from market_rank.data.foundation import DataFoundationError, build_esci_foundation
 from market_rank.data.profiles import ProfileBuildError, build_esci_profiles
+from market_rank.evaluation.ranking import RankingEvaluationError, build_ranking_evaluation
 from market_rank.evaluation.retrieval import (
     RetrievalEvaluationError,
     build_retrieval_evaluation,
@@ -224,6 +225,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="training profile; defaults to evaluation.default_profile",
     )
     train_rankers_parser.add_argument(
+        "--code-revision",
+        default=None,
+        help="explicit lineage revision when Git discovery is unavailable",
+    )
+    evaluate_rankers_parser = ranking_commands.add_parser(
+        "evaluate",
+        help="evaluate validation ranking protocols and promote active relevance",
+    )
+    evaluate_rankers_parser.add_argument("--manifest", type=Path, default=DEFAULT_ESCI_MANIFEST)
+    evaluate_rankers_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    evaluate_rankers_parser.add_argument(
+        "--profile",
+        choices=("development", "portfolio"),
+        default=None,
+        help="evaluation profile; defaults to evaluation.default_profile",
+    )
+    evaluate_rankers_parser.add_argument(
         "--code-revision",
         default=None,
         help="explicit lineage revision when Git discovery is unavailable",
@@ -470,6 +488,36 @@ def _run_train_rankers(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _run_evaluate_rankers(arguments: argparse.Namespace) -> int:
+    config = load_config([arguments.config])
+    release = load_release_manifest(arguments.manifest)
+    result = build_ranking_evaluation(
+        release,
+        config,
+        code_revision=_resolve_code_revision(arguments, arguments.config),
+        profile=arguments.profile,
+    )
+    manifest = result.manifest
+    active = manifest.active_relevance
+    print(
+        f"ranking evaluation: {manifest.profile}, {manifest.validation_queries} validation "
+        f"queries, {manifest.closed_rows} closed rows, {manifest.candidate_rows} candidate rows"
+    )
+    for candidate in active.candidates:
+        metrics = ", ".join(
+            f"NDCG@{cutoff}={value:.4f}" for cutoff, value in candidate.ndcg_by_cutoff
+        )
+        print(f"{candidate.stage}: {metrics}; eligible={str(candidate.eligible).lower()}")
+    print(f"active relevance: {active.selected_stage}; test evaluated=false")
+    print(
+        f"resource: peak RSS {manifest.resource.peak_rss_bytes}/"
+        f"{manifest.resource.rss_limit_bytes} bytes"
+    )
+    status = "reused" if result.reused else "published"
+    print(f"{status} ranking evaluation: {result.artifact.manifest.artifact_id}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run one explicit CLI command and return a bounded process exit code."""
     parser = build_parser()
@@ -493,6 +541,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_build_ranking_features(arguments)
         if arguments.command == "ranking" and arguments.ranking_command == "train":
             return _run_train_rankers(arguments)
+        if arguments.command == "ranking" and arguments.ranking_command == "evaluate":
+            return _run_evaluate_rankers(arguments)
     except RawDataValidationError as exc:
         print(
             f"error: raw ESCI validation failed ({_failed_check_count(exc)} checks failed)",
@@ -507,6 +557,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ProfileBuildError,
         RawDataError,
         RankingFeatureError,
+        RankingEvaluationError,
         RankingTrainingError,
         RetrievalEvaluationError,
         SparseRetrievalError,

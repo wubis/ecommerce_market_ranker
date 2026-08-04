@@ -230,6 +230,33 @@ def test_ranker_ndcg_cutoffs_must_be_unique_sorted_positive_integers() -> None:
         )
 
 
+def test_ranking_evaluation_defaults_quarantine_test_and_bound_populations() -> None:
+    ranking = load_config([BASE_CONFIG]).config.ranking_evaluation
+
+    assert ranking.component_version == "ranking-eval-v1"
+    assert ranking.selection_split == "validation"
+    assert ranking.closed_cutoffs == (10, 20)
+    assert ranking.diagnostic_cutoffs == (10, 100)
+    assert ranking.material_regression_tolerance == 0.005
+    assert ranking.max_closed_rows == 200000
+    assert ranking.max_candidate_rows == 200000
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("ranking_evaluation.closed_cutoffs", [20, 10]),
+        ("ranking_evaluation.diagnostic_cutoffs", [10, 10]),
+        ("ranking_evaluation.closed_cutoffs", [0]),
+    ],
+)
+def test_ranking_evaluation_cutoffs_must_be_positive_unique_and_sorted(
+    key: str, value: list[int]
+) -> None:
+    with pytest.raises(ConfigValidationError, match="ranking-evaluation cutoffs"):
+        load_config([BASE_CONFIG], overrides={key: value})
+
+
 @pytest.mark.parametrize(
     "content",
     [

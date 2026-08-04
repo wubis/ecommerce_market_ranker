@@ -4,7 +4,7 @@ MarketRank is a planned CPU-first, multi-stage e-commerce search and ranking sys
 around the public Amazon ESCI Task 1 relevance judgments. The authoritative architecture is
 defined in [ELEPHANT.md](ELEPHANT.md).
 
-This repository has completed **Goldfish 011**: environment/tooling, reproducible ESCI data
+This repository has completed **Goldfish 012**: environment/tooling, reproducible ESCI data
 foundations, persisted fixed-catalog BM25 retrieval, protocol-safe metric primitives, and a
 checkpointed MiniLM/FAISS dense retriever. Deterministic RRF fusion now produces partitioned
 fixed-cohort retrieval reports with grouped confidence intervals, slices, paired comparisons,
@@ -12,8 +12,11 @@ and a combined sparse+dense memory gate. A deterministic query parser and ordere
 `ltr_core_v1` now produce bounded closed-pool and retrieved-union feature artifacts with
 leakage, distribution, parity, and resource evidence. Exact grouped populations now train and
 persist directly comparable pointwise LightGBM and LambdaMART models with validation-only early
-stopping, reload parity, explanation evidence, and a resource gate. It intentionally contains
-no champion selection, serving, or demo logic.
+stopping, reload parity, explanation evidence, and a resource gate. Protocol-separated
+closed-pool and end-to-end validation reports now provide grouped intervals, slices, ABL-01–05
+evidence, failure analysis, experiment lineage, and deterministic champion selection. Exactly
+one active-relevance contract is promoted without consulting project test. Serving and demo
+logic remain intentionally absent.
 
 ## Reference environment
 
@@ -412,6 +415,32 @@ reload parity. Both models are loaded together before promotion, and matrix/trai
 must remain below 5.5GB. See
 [`docs/goldfish/011-pointwise-lambdamart-rankers.md`](docs/goldfish/011-pointwise-lambdamart-rankers.md).
 
+## Evaluate ranking and promote active relevance
+
+After compatible Goldfish 009–011 artifacts exist, evaluate the validation cohort and publish
+one active-relevance contract:
+
+```bash
+uv run market-rank ranking evaluate
+uv run market-rank ranking evaluate --profile portfolio
+```
+
+Goldfish 012 ranks every complete validation judged pool with direct RRF, pointwise LightGBM,
+and LambdaMART. Only this closed protocol emits official-gain NDCG, Precision, MAP, MRR, and
+Exact Hit. The separately named end-to-end diagnostic reorders the fixed hybrid union and emits
+only qrels-aware retrieval metrics; unjudged catalog products never become false negatives.
+
+Query-level facts feed normalized-query-group bootstrap intervals and query/entity/source/
+judgment-composition slices. ABL-01–03 evidence is inherited from Goldfish 009; ABL-04 compares
+LambdaMART with closed-pool RRF and ABL-05 compares LambdaMART with pointwise on identical pools.
+Bounded largest-delta rows support failure analysis.
+
+The deterministic validation policy promotes a learned model only when it improves at least one
+configured NDCG cutoff without a material regression on another. Otherwise the simpler valid
+stage remains active. The immutable contract records one complete score/rank contract and RRF
+fallback, while project test remains unmaterialized. See
+[`docs/goldfish/012-ranking-evaluation-champion-selection.md`](docs/goldfish/012-ranking-evaluation-champion-selection.md).
+
 ## Download and offline boundary
 
 Internet access is allowed only during explicit setup operations:
@@ -465,6 +494,7 @@ ecommerce_market_ranker/
 ├── docs/goldfish/009-hybrid-retrieval-evaluation.md
 ├── docs/goldfish/010-query-understanding-ranking-features.md
 ├── docs/goldfish/011-pointwise-lambdamart-rankers.md
+├── docs/goldfish/012-ranking-evaluation-champion-selection.md
 ├── docs/goldfish/consolidated-roadmap.md
 ├── src/market_rank/
 │   ├── __init__.py
@@ -480,6 +510,7 @@ ecommerce_market_ranker/
 │   ├── evaluation/
 │   │   ├── __init__.py
 │   │   ├── metrics.py
+│   │   ├── ranking.py
 │   │   └── retrieval.py
 │   ├── features/
 │   │   ├── __init__.py
@@ -502,6 +533,7 @@ ecommerce_market_ranker/
     ├── integration/test_dense_retrieval.py
     ├── integration/test_esci_foundation.py
     ├── integration/test_ranker_training.py
+    ├── integration/test_ranking_evaluation.py
     ├── integration/test_ranking_features.py
     ├── integration/test_retrieval_evaluation.py
     ├── integration/test_sparse_retrieval.py
@@ -515,6 +547,7 @@ ecommerce_market_ranker/
         ├── test_hybrid.py
         ├── test_metrics.py
         ├── test_query_parser.py
+        ├── test_ranking_evaluation.py
         ├── test_training_population.py
         └── test_esci_raw.py
 ```
