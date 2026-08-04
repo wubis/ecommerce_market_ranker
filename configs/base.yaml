@@ -123,6 +123,21 @@ serving:
   allow_degraded_retrieval: true
   allow_ranker_fallback: true
   debug_enabled: true
+demo:
+  component_version: streamlit-demo-v1
+  api_base_url: http://127.0.0.1:8000
+  bind_host: 127.0.0.1
+  port: 8501
+  request_timeout_seconds: 5.0
+  default_top_k: 10
+  max_comparison_modes: 4
+  max_product_cards: 12
+  example_queries:
+    - wireless mouse
+    - running shoes men
+    - iphone 13 case
+    - coffee maker
+    - blue dress
 logging:
   level: INFO
   format: json

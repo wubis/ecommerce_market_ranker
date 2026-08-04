@@ -287,6 +287,41 @@ def test_serving_bounds_are_cross_validated(overrides: dict[str, object], match:
         load_config([BASE_CONFIG], overrides=overrides)
 
 
+def test_demo_defaults_are_local_api_backed_and_bounded() -> None:
+    demo = load_config([BASE_CONFIG]).config.demo
+
+    assert demo.component_version == "streamlit-demo-v1"
+    assert demo.api_base_url == "http://127.0.0.1:8000"
+    assert demo.bind_host == "127.0.0.1"
+    assert demo.port == 8501
+    assert demo.default_top_k == 10
+    assert demo.max_comparison_modes == 4
+    assert demo.max_product_cards == 12
+    assert "wireless mouse" in demo.example_queries
+
+
+@pytest.mark.parametrize(
+    "overrides,match",
+    [
+        (
+            {"demo.default_top_k": 21, "serving.max_response_top_k": 20},
+            "demo default top-K",
+        ),
+        (
+            {"demo.max_product_cards": 21, "serving.max_response_top_k": 20},
+            "product-card bound",
+        ),
+        ({"demo.example_queries": ["mouse", "mouse"]}, "unique"),
+        ({"demo.example_queries": [" mouse"]}, "surrounding whitespace"),
+    ],
+)
+def test_demo_configuration_rejects_unbounded_or_ambiguous_values(
+    overrides: dict[str, object], match: str
+) -> None:
+    with pytest.raises(ConfigValidationError, match=match):
+        load_config([BASE_CONFIG], overrides=overrides)
+
+
 @pytest.mark.parametrize(
     "key,value",
     [

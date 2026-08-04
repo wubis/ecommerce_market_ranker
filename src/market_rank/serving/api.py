@@ -8,68 +8,27 @@ from dataclasses import dataclass
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
 
 from market_rank.artifacts import ArtifactStore
 from market_rank.config import ResolvedConfig
 from market_rank.query.parser import QueryParserError
 from market_rank.retrieval.dense import DenseEncoder
-from market_rank.serving.orchestrator import (
-    ComponentStatus,
+from market_rank.serving.contracts import (
+    ArtifactComponentResponse,
+    ArtifactInfoResponse,
+    LivenessResponse,
+    ModelInfoResponse,
+    ReadinessResponse,
     SearchRequest,
     SearchResponse,
+)
+from market_rank.serving.orchestrator import (
     ServingBusyError,
     ServingRequestError,
     ServingRuntime,
     ServingUnavailableError,
     load_serving_runtime,
 )
-
-
-class _StrictModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-class LivenessResponse(_StrictModel):
-    status: str = Field(default="live", pattern="^live$")
-
-
-class ReadinessResponse(_StrictModel):
-    status: str = Field(pattern="^(ready|not_ready)$")
-    ready: bool = Field(strict=True)
-    degraded: bool = Field(strict=True)
-    bundle_id: str | None
-    active_stage: str | None
-    components: tuple[ComponentStatus, ...]
-
-
-class ModelInfoResponse(_StrictModel):
-    bundle_id: str
-    active_stage: str
-    active_score_field: str
-    active_score_comparable: bool
-    fallback_contract: str
-    feature_set_id: str
-    feature_names: tuple[str, ...]
-    parser_state_sha256: str
-    ranking_models_artifact_id: str
-
-
-class ArtifactComponentResponse(_StrictModel):
-    component: str
-    artifact_id: str
-    manifest_sha256: str
-
-
-class ArtifactInfoResponse(_StrictModel):
-    bundle_id: str
-    dataset_version: str
-    profile: str
-    catalog_id: str
-    catalog_membership_sha256: str
-    config_sha256: str
-    offline_startup_required: bool
-    components: tuple[ArtifactComponentResponse, ...]
 
 
 @dataclass(slots=True)

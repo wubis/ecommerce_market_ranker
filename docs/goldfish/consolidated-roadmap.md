@@ -14,17 +14,17 @@ tested, documented, reproducible, and independently reviewable.
 
 | Scope | Target |
 |---|---:|
-| Current implemented sequence | Through Goldfish 013 |
+| Current implemented sequence | Through Goldfish 014 |
 | Core portfolio-ready project | Goldfish 016 |
-| Remaining core Goldfishes | Approximately 3 |
+| Remaining core Goldfishes | Approximately 2 |
 | Optional neural and diversity extensions | Goldfish 017–018 |
 
 Goldfish 004A is an additional completed extension even though it does not advance the primary
 integer numbering. The recommended plan therefore concerns the remaining numbered stages and
 does not attempt to renumber prior work.
 
-The expanded plan targeted roughly ten subsystem-sized stages beginning with Goldfish 007. Seven
-of those stages are now implemented and three core stages remain. That sizing keeps dense
+The expanded plan targeted roughly ten subsystem-sized stages beginning with Goldfish 007. Eight
+of those stages are now implemented and two core stages remain. That sizing keeps dense
 retrieval, features, training, evaluation, serving, demo, and qualification independently
 reviewable without returning to the earlier fragmentation.
 
@@ -87,6 +87,8 @@ load persisted assets without rebuilding or downloading, expose validated FastAP
 support readiness and degraded modes, and add bounded API integration tests.
 
 ### Goldfish 014 — Streamlit Portfolio Demo
+
+**Status: Implemented.**
 
 Implement the API-backed Streamlit client, ranking-mode comparisons, product cards, bounded
 debug explanations, rank-change/provenance displays, latency visibility, limitations, and a

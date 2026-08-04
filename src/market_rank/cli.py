@@ -14,6 +14,7 @@ from market_rank.data.download import DownloadPolicy, download_validate_esci
 from market_rank.data.esci_raw import RawDataError, RawDataValidationError, load_release_manifest
 from market_rank.data.foundation import DataFoundationError, build_esci_foundation
 from market_rank.data.profiles import ProfileBuildError, build_esci_profiles
+from market_rank.demo.client import DemoApiClient, DemoClientError
 from market_rank.evaluation.ranking import RankingEvaluationError, build_ranking_evaluation
 from market_rank.evaluation.retrieval import (
     RetrievalEvaluationError,
@@ -37,6 +38,10 @@ DEFAULT_CONFIG = Path("configs/base.yaml")
 
 class CodeRevisionError(RawDataError):
     """Raised when the CLI cannot record a repository revision."""
+
+
+class DemoLaunchError(RuntimeError):
+    """Raised when the local Streamlit process cannot be launched cleanly."""
 
 
 def _find_repository_root(start: Path) -> Path:
@@ -274,6 +279,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument("--bundle-id", required=True)
     run_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    demo_parser = command_parsers.add_parser(
+        "demo", help="API-backed local Streamlit portfolio-demo commands"
+    )
+    demo_commands = demo_parser.add_subparsers(dest="demo_command", required=True)
+    check_demo_parser = demo_commands.add_parser(
+        "check", help="verify that the configured local MarketRank API is ready"
+    )
+    check_demo_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    run_demo_parser = demo_commands.add_parser("run", help="launch the thin local Streamlit client")
+    run_demo_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     return parser
 
 
@@ -582,6 +597,47 @@ def _run_serving_api(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _run_demo_check(arguments: argparse.Namespace) -> int:
+    config = load_config([arguments.config])
+    demo = config.config.demo
+    with DemoApiClient(demo.api_base_url, timeout_seconds=demo.request_timeout_seconds) as client:
+        readiness = client.ready()
+    state = "degraded" if readiness.degraded else "ready"
+    print(f"demo API: {state}; active stage {readiness.active_stage}; bundle {readiness.bundle_id}")
+    return 0
+
+
+def _run_demo(arguments: argparse.Namespace) -> int:
+    config = load_config([arguments.config])
+    demo = config.config.demo
+    app_path = Path(__file__).with_name("demo") / "app.py"
+    try:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "streamlit",
+                "run",
+                str(app_path),
+                "--server.address",
+                demo.bind_host,
+                "--server.port",
+                str(demo.port),
+                "--browser.gatherUsageStats",
+                "false",
+                "--",
+                "--config",
+                str(arguments.config),
+            ],
+            check=False,
+        )
+    except OSError as exc:
+        raise DemoLaunchError(f"cannot launch Streamlit: {exc}") from exc
+    if completed.returncode != 0:
+        raise DemoLaunchError(f"Streamlit exited with status {completed.returncode}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run one explicit CLI command and return a bounded process exit code."""
     parser = build_parser()
@@ -611,6 +667,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_promote_serving(arguments)
         if arguments.command == "serving" and arguments.serving_command == "run":
             return _run_serving_api(arguments)
+        if arguments.command == "demo" and arguments.demo_command == "check":
+            return _run_demo_check(arguments)
+        if arguments.command == "demo" and arguments.demo_command == "run":
+            return _run_demo(arguments)
     except RawDataValidationError as exc:
         print(
             f"error: raw ESCI validation failed ({_failed_check_count(exc)} checks failed)",
@@ -622,6 +682,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         ConfigError,
         DataFoundationError,
         DenseRetrievalError,
+        DemoClientError,
+        DemoLaunchError,
         ProfileBuildError,
         RawDataError,
         RankingFeatureError,

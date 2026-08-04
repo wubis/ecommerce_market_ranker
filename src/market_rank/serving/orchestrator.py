@@ -5,10 +5,9 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass
-from typing import Literal, Self, cast
+from typing import Self, cast
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from market_rank.artifacts import ArtifactStore, LoadedArtifact
 from market_rank.config import ResolvedConfig
@@ -45,10 +44,18 @@ from market_rank.serving.bundle import (
     load_product_store,
     load_serving_bundle_manifest,
 )
-
-SearchMode = Literal["active", "bm25", "dense", "hybrid", "pointwise", "lambdamart"]
-ResolvedStage = Literal["bm25", "dense", "rrf", "pointwise", "lambdamart"]
-ComponentState = Literal["ready", "degraded", "unavailable"]
+from market_rank.serving.contracts import (
+    ComponentStatus,
+    FallbackEvent,
+    ResolvedStage,
+    ResultDebug,
+    RetrievalProvenance,
+    RuntimeInfo,
+    SearchRequest,
+    SearchResponse,
+    SearchResult,
+    SearchTimings,
+)
 
 
 class ServingRuntimeError(RuntimeError):
@@ -65,114 +72,6 @@ class ServingBusyError(ServingRuntimeError):
 
 class ServingRequestError(ServingRuntimeError):
     """Raised when a request violates a configuration-dependent bound."""
-
-
-class _StrictModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-class SearchRequest(_StrictModel):
-    query: str = Field(strict=True, min_length=1, max_length=4096)
-    top_k: int | None = Field(default=None, strict=True, ge=1, le=100)
-    mode: SearchMode = "active"
-    neural_rerank: bool = Field(default=False, strict=True)
-    diversify: bool = Field(default=False, strict=True)
-    deadline_ms: int | None = Field(default=None, strict=True, ge=100, le=30000)
-    debug: bool = Field(default=False, strict=True)
-
-
-class ComponentStatus(_StrictModel):
-    component: Literal["bundle", "product_store", "sparse", "dense", "rankers"]
-    state: ComponentState
-    detail: str = Field(strict=True, min_length=1)
-
-
-class FallbackEvent(_StrictModel):
-    component: str = Field(strict=True, min_length=1)
-    requested_stage: str = Field(strict=True, min_length=1)
-    resolved_stage: str = Field(strict=True, min_length=1)
-    reason_code: str = Field(strict=True, min_length=1)
-
-
-class SearchTimings(_StrictModel):
-    parse_ms: float = Field(ge=0.0, allow_inf_nan=False)
-    sparse_ms: float = Field(ge=0.0, allow_inf_nan=False)
-    dense_ms: float = Field(ge=0.0, allow_inf_nan=False)
-    fusion_ms: float = Field(ge=0.0, allow_inf_nan=False)
-    features_ms: float = Field(ge=0.0, allow_inf_nan=False)
-    ranker_ms: float = Field(ge=0.0, allow_inf_nan=False)
-    product_lookup_ms: float = Field(ge=0.0, allow_inf_nan=False)
-    total_ms: float = Field(ge=0.0, allow_inf_nan=False)
-
-
-class RetrievalProvenance(_StrictModel):
-    bm25_score: float | None = Field(default=None, allow_inf_nan=False)
-    bm25_rank: int | None = Field(default=None, strict=True, ge=1)
-    sparse_retriever_id: str | None = None
-    sparse_index_id: str | None = None
-    dense_score: float | None = Field(default=None, allow_inf_nan=False)
-    dense_rank: int | None = Field(default=None, strict=True, ge=1)
-    dense_retriever_id: str | None = None
-    dense_index_id: str | None = None
-    rrf_score: float = Field(ge=0.0, allow_inf_nan=False)
-    rrf_rank: int = Field(strict=True, ge=1)
-    source_count: int = Field(strict=True, ge=1, le=2)
-
-
-class ResultDebug(_StrictModel):
-    feature_values: tuple[tuple[str, float], ...]
-
-
-class SearchResult(_StrictModel):
-    product_id: str = Field(strict=True, min_length=1)
-    locale: Literal["us"]
-    rank: int = Field(strict=True, ge=1)
-    score: float = Field(allow_inf_nan=False)
-    score_field: str = Field(strict=True, min_length=1)
-    title: str
-    brand: str
-    color: str
-    bullets: str
-    description_snippet: str
-    provenance: RetrievalProvenance
-    debug: ResultDebug | None = None
-
-
-class SearchResponse(_StrictModel):
-    query_sha256: str = Field(strict=True, pattern=r"^[0-9a-f]{64}$")
-    bundle_id: str = Field(strict=True, min_length=1)
-    catalog_id: str = Field(strict=True, min_length=1)
-    config_sha256: str = Field(strict=True, pattern=r"^[0-9a-f]{64}$")
-    requested_mode: SearchMode
-    promoted_stage: Literal["rrf", "pointwise", "lambdamart"]
-    resolved_stage: ResolvedStage
-    score_field: str = Field(strict=True, min_length=1)
-    score_comparable_with_promoted_stage: bool = Field(strict=True)
-    degraded: bool = Field(strict=True)
-    fallbacks: tuple[FallbackEvent, ...]
-    candidate_count: int = Field(strict=True, ge=0)
-    results: tuple[SearchResult, ...]
-    timings: SearchTimings
-
-    @model_validator(mode="after")
-    def validate_results(self) -> Self:
-        if self.results and tuple(result.rank for result in self.results) != tuple(
-            range(1, len(self.results) + 1)
-        ):
-            raise ValueError("result ranks must be contiguous and one-based")
-        if len({result.product_id for result in self.results}) != len(self.results):
-            raise ValueError("search results must have unique product IDs")
-        return self
-
-
-class RuntimeInfo(_StrictModel):
-    ready: bool = Field(strict=True)
-    degraded: bool = Field(strict=True)
-    bundle_id: str = Field(strict=True, min_length=1)
-    catalog_id: str = Field(strict=True, min_length=1)
-    config_sha256: str = Field(strict=True, pattern=r"^[0-9a-f]{64}$")
-    active_stage: Literal["rrf", "pointwise", "lambdamart"]
-    components: tuple[ComponentStatus, ...]
 
 
 @dataclass(frozen=True, slots=True)

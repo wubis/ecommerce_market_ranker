@@ -315,6 +315,37 @@ class ServingConfig(_StrictModel):
         return self
 
 
+class DemoConfig(_StrictModel):
+    """Local-only, API-backed Streamlit portfolio-demo controls."""
+
+    component_version: Literal["streamlit-demo-v1"] = "streamlit-demo-v1"
+    api_base_url: Literal["http://127.0.0.1:8000"] = "http://127.0.0.1:8000"
+    bind_host: Literal["127.0.0.1"] = "127.0.0.1"
+    port: int = Field(default=8501, strict=True, ge=1024, le=65535)
+    request_timeout_seconds: float = Field(default=5.0, strict=True, ge=0.1, le=30.0)
+    default_top_k: int = Field(default=10, strict=True, ge=1, le=50)
+    max_comparison_modes: int = Field(default=4, strict=True, ge=1, le=6)
+    max_product_cards: int = Field(default=12, strict=True, ge=1, le=50)
+    example_queries: tuple[str, ...] = (
+        "wireless mouse",
+        "running shoes men",
+        "iphone 13 case",
+        "coffee maker",
+        "blue dress",
+    )
+
+    @model_validator(mode="after")
+    def validate_demo(self) -> Self:
+        normalized = tuple(query.strip() for query in self.example_queries)
+        if not normalized or any(not query or len(query) > 512 for query in normalized):
+            raise ValueError("demo example queries must be nonempty and at most 512 characters")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("demo example queries must be unique")
+        if normalized != self.example_queries:
+            raise ValueError("demo example queries must not contain surrounding whitespace")
+        return self
+
+
 class LoggingConfig(_StrictModel):
     """Safe local logging defaults."""
 
@@ -338,6 +369,7 @@ class AppConfig(_StrictModel):
     ranker_training: RankerTrainingConfig = RankerTrainingConfig()
     ranking_evaluation: RankingEvaluationConfig = RankingEvaluationConfig()
     serving: ServingConfig = ServingConfig()
+    demo: DemoConfig = DemoConfig()
     logging: LoggingConfig = LoggingConfig()
 
     @model_validator(mode="after")
@@ -353,6 +385,10 @@ class AppConfig(_StrictModel):
             raise ValueError("ranking feature row bound is smaller than the hybrid union depth")
         if self.serving.max_response_top_k > self.retrieval.hybrid.union_top_k:
             raise ValueError("serving response top-K exceeds the hybrid union depth")
+        if self.demo.default_top_k > self.serving.max_response_top_k:
+            raise ValueError("demo default top-K exceeds the serving response bound")
+        if self.demo.max_product_cards > self.serving.max_response_top_k:
+            raise ValueError("demo product-card bound exceeds the serving response bound")
         return self
 
 
@@ -517,6 +553,7 @@ __all__ = [
     "ConfigOverrideError",
     "ConfigValidationError",
     "DatasetConfig",
+    "DemoConfig",
     "DenseRetrievalConfig",
     "EvaluationConfig",
     "HybridRetrievalConfig",

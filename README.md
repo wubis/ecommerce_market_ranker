@@ -4,7 +4,7 @@ MarketRank is a planned CPU-first, multi-stage e-commerce search and ranking sys
 around the public Amazon ESCI Task 1 relevance judgments. The authoritative architecture is
 defined in [ELEPHANT.md](ELEPHANT.md).
 
-This repository has completed **Goldfish 013**: environment/tooling, reproducible ESCI data
+This repository has completed **Goldfish 014**: environment/tooling, reproducible ESCI data
 foundations, persisted fixed-catalog BM25 retrieval, protocol-safe metric primitives, and a
 checkpointed MiniLM/FAISS dense retriever. Deterministic RRF fusion now produces partitioned
 fixed-cohort retrieval reports with grouped confidence intervals, slices, paired comparisons,
@@ -18,8 +18,9 @@ evidence, failure analysis, experiment lineage, and deterministic champion selec
 one active-relevance contract is promoted without consulting project test. An explicit immutable
 serving bundle now packages verified retrieval/model lineage and a safe indexed product
 projection. The offline runtime exposes bounded search through validated FastAPI contracts with
-readiness and degraded fallbacks. Streamlit and final local qualification remain intentionally
-absent.
+readiness and degraded fallbacks. A thin localhost-only Streamlit client now compares ranking
+modes with product cards, provenance, rank movement, bounded debug features, latency, lineage,
+and explicit dataset limitations. Final local qualification remains intentionally absent.
 
 ## Reference environment
 
@@ -469,6 +470,24 @@ degrades to the other source, while model failure restores RRF and two unavailab
 block readiness. See
 [`docs/goldfish/013-serving-bundle-fastapi.md`](docs/goldfish/013-serving-bundle-fastapi.md).
 
+## Run the local portfolio demo
+
+Keep the explicit API process above running. In a second terminal, verify readiness and launch
+the API-backed UI:
+
+```bash
+uv run market-rank demo check
+uv run market-rank demo run
+```
+
+Open `http://127.0.0.1:8501`. The demo and API bind only to loopback. Streamlit does not load
+models or artifacts: it sends strict requests to FastAPI and displays validated results. Compare
+the active champion with BM25, dense, hybrid RRF, pointwise, or LambdaMART; inspect rank movement,
+retrieval provenance, fallbacks, latency, and reproduction IDs; and optionally request bounded
+feature values. List-composition statistics are presentation diagnostics, not relevance or
+fairness claims. See
+[`docs/goldfish/014-streamlit-portfolio-demo.md`](docs/goldfish/014-streamlit-portfolio-demo.md).
+
 ## Download and offline boundary
 
 Internet access is allowed only during explicit setup operations:
@@ -496,7 +515,7 @@ A Colab-produced artifact is acceptable only when the batch:
 - records input/output checksums, dependency versions, and an artifact manifest;
 - passes local compatibility and parity validation before promotion.
 
-FastAPI, Streamlit, smoke tests, artifact loading, and the required portfolio workflow remain
+FastAPI, Streamlit, smoke tests, artifact loading, and the required portfolio workflow are
 local-first.
 
 ## Current layout
@@ -524,6 +543,7 @@ ecommerce_market_ranker/
 ├── docs/goldfish/011-pointwise-lambdamart-rankers.md
 ├── docs/goldfish/012-ranking-evaluation-champion-selection.md
 ├── docs/goldfish/013-serving-bundle-fastapi.md
+├── docs/goldfish/014-streamlit-portfolio-demo.md
 ├── docs/goldfish/consolidated-roadmap.md
 ├── src/market_rank/
 │   ├── __init__.py
@@ -558,10 +578,16 @@ ecommerce_market_ranker/
 │   │   ├── dense.py
 │   │   ├── hybrid.py
 │   │   └── sparse.py
+│   ├── demo/
+│   │   ├── __init__.py
+│   │   ├── app.py
+│   │   ├── client.py
+│   │   └── presentation.py
 │   └── serving/
 │       ├── __init__.py
 │       ├── api.py
 │       ├── bundle.py
+│       ├── contracts.py
 │       └── orchestrator.py
 └── tests/
     ├── integration/test_dense_retrieval.py
@@ -572,10 +598,12 @@ ecommerce_market_ranker/
     ├── integration/test_retrieval_evaluation.py
     ├── integration/test_sparse_retrieval.py
     ├── integration/test_serving.py
+    ├── smoke/test_demo_app.py
     ├── smoke/test_import.py
     └── unit/
         ├── test_artifacts.py
         ├── test_config.py
+        ├── test_demo.py
         ├── test_esci_download.py
         ├── test_esci_profiles.py
         ├── test_features.py
