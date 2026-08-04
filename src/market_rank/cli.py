@@ -18,6 +18,7 @@ from market_rank.evaluation.retrieval import (
     RetrievalEvaluationError,
     build_retrieval_evaluation,
 )
+from market_rank.features.artifact import RankingFeatureError, build_ranking_features
 from market_rank.retrieval.dense import (
     DenseRetrievalError,
     build_dense_index,
@@ -180,6 +181,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="evaluation profile; defaults to evaluation.default_profile",
     )
     hybrid_parser.add_argument(
+        "--code-revision",
+        default=None,
+        help="explicit lineage revision when Git discovery is unavailable",
+    )
+    feature_parser = command_parsers.add_parser(
+        "features", help="versioned query-understanding and ranking-feature lifecycle commands"
+    )
+    feature_commands = feature_parser.add_subparsers(dest="feature_command", required=True)
+    build_features_parser = feature_commands.add_parser(
+        "build-ranking",
+        help="persist parser state and bounded closed/candidate ltr_core_v1 matrices",
+    )
+    build_features_parser.add_argument("--manifest", type=Path, default=DEFAULT_ESCI_MANIFEST)
+    build_features_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    build_features_parser.add_argument(
+        "--profile",
+        choices=("development", "portfolio"),
+        default=None,
+        help="feature profile; defaults to evaluation.default_profile",
+    )
+    build_features_parser.add_argument(
         "--code-revision",
         default=None,
         help="explicit lineage revision when Git discovery is unavailable",
@@ -363,6 +385,37 @@ def _run_evaluate_hybrid(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _run_build_ranking_features(arguments: argparse.Namespace) -> int:
+    config = load_config([arguments.config])
+    release = load_release_manifest(arguments.manifest)
+    result = build_ranking_features(
+        release,
+        config,
+        code_revision=_resolve_code_revision(arguments, arguments.config),
+        profile=arguments.profile,
+    )
+    manifest = result.manifest
+    print(
+        f"feature cohort: {manifest.profile}, {manifest.query_count} queries, "
+        f"{manifest.feature_count} ordered features"
+    )
+    print(
+        f"matrices: {manifest.closed_rows} labeled closed rows, "
+        f"{manifest.candidate_rows} label-free candidate rows"
+    )
+    print(
+        "closed exclusions: "
+        f"{manifest.closed_excluded_outside_catalog} judged rows outside the fixed catalog"
+    )
+    print(
+        f"resource: peak RSS {manifest.resource.peak_rss_bytes}/"
+        f"{manifest.resource.rss_limit_bytes} bytes"
+    )
+    status = "reused" if result.reused else "published"
+    print(f"{status} ranking features: {result.artifact.manifest.artifact_id}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run one explicit CLI command and return a bounded process exit code."""
     parser = build_parser()
@@ -382,6 +435,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_build_dense(arguments)
         if arguments.command == "retrieval" and arguments.retrieval_command == "evaluate-hybrid":
             return _run_evaluate_hybrid(arguments)
+        if arguments.command == "features" and arguments.feature_command == "build-ranking":
+            return _run_build_ranking_features(arguments)
     except RawDataValidationError as exc:
         print(
             f"error: raw ESCI validation failed ({_failed_check_count(exc)} checks failed)",
@@ -395,6 +450,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         DenseRetrievalError,
         ProfileBuildError,
         RawDataError,
+        RankingFeatureError,
         RetrievalEvaluationError,
         SparseRetrievalError,
         ValueError,

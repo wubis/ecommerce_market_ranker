@@ -823,6 +823,11 @@ class SparseIndex:
             for product_id in product_ids
         )
 
+    def query_idf_values(self, query: str) -> tuple[float, ...]:
+        """Return unique in-vocabulary query-token IDFs for shared feature formulas."""
+        term_ids = self._validate_query(query)
+        return tuple(float(self._idf.values[term_id]) for term_id in term_ids)
+
 
 def load_sparse_index(store: ArtifactStore, artifact_id: str) -> SparseIndex:
     """Recursively verify and memory-map one immutable sparse index artifact."""

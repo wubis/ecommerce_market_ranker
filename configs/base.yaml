@@ -60,6 +60,21 @@ evaluation:
   bootstrap_batch_replicates: 100
   candidate_partition_rows: 100000
   metric_partition_rows: 100000
+query_understanding:
+  parser_version: query-parser-v1
+  max_query_chars: 512
+  max_query_bytes: 2048
+  max_query_tokens: 64
+  brand_min_chars: 2
+ranking_features:
+  component_version: ranking-features-v1
+  feature_set_id: ltr_core_v1
+  registry_version: feature-registry-v1
+  state_version: feature-state-v1
+  matrix_partition_rows: 100000
+  query_batch_size: 64
+  parity_fixture_rows: 128
+  max_rows_per_query: 200
 logging:
   level: INFO
   format: json

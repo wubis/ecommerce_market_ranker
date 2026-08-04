@@ -164,6 +164,40 @@ def test_hybrid_source_depth_cannot_exceed_source_index_maximum() -> None:
         )
 
 
+def test_query_and_ranking_feature_defaults_are_m3_bounded() -> None:
+    resolved = load_config([BASE_CONFIG]).config
+
+    assert resolved.query_understanding.parser_version == "query-parser-v1"
+    assert resolved.query_understanding.max_query_chars == 512
+    assert resolved.query_understanding.max_query_tokens == 64
+    assert resolved.ranking_features.feature_set_id == "ltr_core_v1"
+    assert resolved.ranking_features.query_batch_size == 64
+    assert resolved.ranking_features.matrix_partition_rows == 100000
+    assert resolved.ranking_features.max_rows_per_query == 200
+
+
+def test_feature_partition_must_fit_one_complete_query_group() -> None:
+    with pytest.raises(ConfigValidationError, match="max_rows_per_query"):
+        load_config(
+            [BASE_CONFIG],
+            overrides={
+                "ranking_features.matrix_partition_rows": 100,
+                "ranking_features.max_rows_per_query": 200,
+            },
+        )
+
+
+def test_feature_row_bound_must_cover_hybrid_union() -> None:
+    with pytest.raises(ConfigValidationError, match="feature row bound"):
+        load_config(
+            [BASE_CONFIG],
+            overrides={
+                "retrieval.hybrid.union_top_k": 200,
+                "ranking_features.max_rows_per_query": 199,
+            },
+        )
+
+
 @pytest.mark.parametrize(
     "content",
     [

@@ -14,9 +14,9 @@ tested, documented, reproducible, and independently reviewable.
 
 | Scope | Target |
 |---|---:|
-| Current implemented sequence | Through Goldfish 009 |
+| Current implemented sequence | Through Goldfish 010 |
 | Core portfolio-ready project | Goldfish 016 |
-| Remaining core Goldfishes | Approximately 7 |
+| Remaining core Goldfishes | Approximately 6 |
 | Optional neural and diversity extensions | Goldfish 017–018 |
 
 Goldfish 004A is an additional completed extension even though it does not advance the primary
@@ -55,6 +55,8 @@ fixed-catalog candidate generation, fair sparse/dense/hybrid comparisons, query-
 confidence intervals, retrieval slices, and the combined sparse+dense memory gate.
 
 ### Goldfish 010 — Query Understanding and Ranking Features
+
+**Status: Implemented.**
 
 Implement the deterministic query parser, versioned feature registry, `ltr_core_v1`, bounded
 candidate/pool feature materialization, leakage checks, distribution reports, persisted feature

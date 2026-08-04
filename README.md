@@ -4,12 +4,14 @@ MarketRank is a planned CPU-first, multi-stage e-commerce search and ranking sys
 around the public Amazon ESCI Task 1 relevance judgments. The authoritative architecture is
 defined in [ELEPHANT.md](ELEPHANT.md).
 
-This repository has completed **Goldfish 009**: environment/tooling, reproducible ESCI data
+This repository has completed **Goldfish 010**: environment/tooling, reproducible ESCI data
 foundations, persisted fixed-catalog BM25 retrieval, protocol-safe metric primitives, and a
 checkpointed MiniLM/FAISS dense retriever. Deterministic RRF fusion now produces partitioned
 fixed-cohort retrieval reports with grouped confidence intervals, slices, paired comparisons,
-and a combined sparse+dense memory gate. It intentionally contains no query-understanding
-features, ranking models, serving, or demo logic.
+and a combined sparse+dense memory gate. A deterministic query parser and ordered 44-column
+`ltr_core_v1` now produce bounded closed-pool and retrieved-union feature artifacts with
+leakage, distribution, parity, and resource evidence. It intentionally contains no ranking
+models, serving, or demo logic.
 
 ## Reference environment
 
@@ -351,6 +353,36 @@ also requires the simultaneously loaded sparse+dense process and completed evalu
 remain below the configured 5.5GB RSS limit. See
 [`docs/goldfish/009-hybrid-retrieval-evaluation.md`](docs/goldfish/009-hybrid-retrieval-evaluation.md).
 
+## Build query understanding and ranking features
+
+After the compatible Goldfish 006–009 artifacts exist, materialize the development or portfolio
+feature artifact:
+
+```bash
+uv run market-rank features build-ranking
+uv run market-rank features build-ranking --profile portfolio
+```
+
+Goldfish 010 persists a bounded `query-parser-v1` state from official label-free catalog
+brand/color values. It performs NFKC/casefold/whitespace normalization, versioned tokenization,
+conservative number/unit/model/compatibility extraction, longest-boundary brand matching, color
+aliases, explicit spelling aliases, entity confidences, warnings, and deterministic hashes.
+Parser signals are ranking evidence and never hard filters.
+
+The ordered 44-feature `ltr_core_v1` registry combines query/product interactions with direct
+BM25 and dense scores, bounded within-set rank fractions, and direct-score RRF. Category codes
+fit only portfolio project-train source fields with reserved missing/unknown codes. Labels,
+target history, product identity, absolute ranks/counts, and original top-K provenance are not
+model features.
+
+The closed matrix contains every catalog-eligible judged pair with label/gain metadata and
+counts judgments excluded for lacking a retrievable document; the retrieved-union matrix is
+physically label-free. Both populations directly score every eligible pair with both indexes.
+Query groups stay intact in bounded Parquet partitions, and reports persist population
+distributions, shared-formula parity vectors, exact four-parent lineage, leakage checks, and a
+5.5GB RSS promotion gate. See
+[`docs/goldfish/010-query-understanding-ranking-features.md`](docs/goldfish/010-query-understanding-ranking-features.md).
+
 ## Download and offline boundary
 
 Internet access is allowed only during explicit setup operations:
@@ -402,6 +434,7 @@ ecommerce_market_ranker/
 ├── docs/goldfish/007-sparse-retrieval-evaluation.md
 ├── docs/goldfish/008-dense-retrieval-faiss.md
 ├── docs/goldfish/009-hybrid-retrieval-evaluation.md
+├── docs/goldfish/010-query-understanding-ranking-features.md
 ├── docs/goldfish/consolidated-roadmap.md
 ├── src/market_rank/
 │   ├── __init__.py
@@ -418,6 +451,14 @@ ecommerce_market_ranker/
 │   │   ├── __init__.py
 │   │   ├── metrics.py
 │   │   └── retrieval.py
+│   ├── features/
+│   │   ├── __init__.py
+│   │   ├── artifact.py
+│   │   ├── core.py
+│   │   └── registry.py
+│   ├── query/
+│   │   ├── __init__.py
+│   │   └── parser.py
 │   └── retrieval/
 │       ├── __init__.py
 │       ├── dense.py
@@ -426,6 +467,7 @@ ecommerce_market_ranker/
 └── tests/
     ├── integration/test_dense_retrieval.py
     ├── integration/test_esci_foundation.py
+    ├── integration/test_ranking_features.py
     ├── integration/test_retrieval_evaluation.py
     ├── integration/test_sparse_retrieval.py
     ├── smoke/test_import.py
@@ -434,8 +476,10 @@ ecommerce_market_ranker/
         ├── test_config.py
         ├── test_esci_download.py
         ├── test_esci_profiles.py
+        ├── test_features.py
         ├── test_hybrid.py
         ├── test_metrics.py
+        ├── test_query_parser.py
         └── test_esci_raw.py
 ```
 

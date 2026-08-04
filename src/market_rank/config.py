@@ -188,6 +188,35 @@ class EvaluationConfig(_StrictModel):
         return self
 
 
+class QueryUnderstandingConfig(_StrictModel):
+    """Bounded deterministic query parsing and dictionary state."""
+
+    parser_version: Literal["query-parser-v1"] = "query-parser-v1"
+    max_query_chars: int = Field(default=512, strict=True, ge=1, le=4096)
+    max_query_bytes: int = Field(default=2048, strict=True, ge=4, le=16384)
+    max_query_tokens: int = Field(default=64, strict=True, ge=1, le=512)
+    brand_min_chars: int = Field(default=2, strict=True, ge=1, le=64)
+
+
+class RankingFeatureConfig(_StrictModel):
+    """Versioned, candidate-aligned ranking feature materialization controls."""
+
+    component_version: Literal["ranking-features-v1"] = "ranking-features-v1"
+    feature_set_id: Literal["ltr_core_v1"] = "ltr_core_v1"
+    registry_version: Literal["feature-registry-v1"] = "feature-registry-v1"
+    state_version: Literal["feature-state-v1"] = "feature-state-v1"
+    matrix_partition_rows: int = Field(default=100000, strict=True, ge=1, le=1000000)
+    query_batch_size: int = Field(default=64, strict=True, ge=1, le=1000)
+    parity_fixture_rows: int = Field(default=128, strict=True, ge=1, le=10000)
+    max_rows_per_query: int = Field(default=200, strict=True, ge=1, le=1000)
+
+    @model_validator(mode="after")
+    def validate_partitioning(self) -> Self:
+        if self.max_rows_per_query > self.matrix_partition_rows:
+            raise ValueError("max_rows_per_query must not exceed matrix_partition_rows")
+        return self
+
+
 class LoggingConfig(_StrictModel):
     """Safe local logging defaults."""
 
@@ -206,6 +235,8 @@ class AppConfig(_StrictModel):
     dataset: DatasetConfig = DatasetConfig()
     retrieval: RetrievalConfig = RetrievalConfig()
     evaluation: EvaluationConfig = EvaluationConfig()
+    query_understanding: QueryUnderstandingConfig = QueryUnderstandingConfig()
+    ranking_features: RankingFeatureConfig = RankingFeatureConfig()
     logging: LoggingConfig = LoggingConfig()
 
     @model_validator(mode="after")
@@ -217,6 +248,8 @@ class AppConfig(_StrictModel):
             self.retrieval.hybrid.union_top_k,
         ):
             raise ValueError("evaluation cutoffs exceed a configured retrieval depth")
+        if self.ranking_features.max_rows_per_query < self.retrieval.hybrid.union_top_k:
+            raise ValueError("ranking feature row bound is smaller than the hybrid union depth")
         return self
 
 
@@ -387,6 +420,8 @@ __all__ = [
     "LoggingConfig",
     "PathsConfig",
     "ProjectConfig",
+    "QueryUnderstandingConfig",
+    "RankingFeatureConfig",
     "ResolvedConfig",
     "RetrievalConfig",
     "RuntimeConfig",
