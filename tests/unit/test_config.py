@@ -352,6 +352,27 @@ def test_invalid_qualification_configuration_is_rejected(
         load_config([BASE_CONFIG], overrides={key: value})
 
 
+def test_portfolio_report_defaults_require_test_screenshots_and_clean_reproduction() -> None:
+    portfolio = load_config([BASE_CONFIG]).config.portfolio_report
+
+    assert portfolio.required_profile == "portfolio"
+    assert portfolio.final_evaluation_split == "test"
+    assert portfolio.require_clean_reproduction
+    assert portfolio.screenshot_filenames == (
+        "ranking-comparison.png",
+        "product-provenance.png",
+        "dataset-limitations.png",
+    )
+
+
+def test_portfolio_report_rejects_noncanonical_screenshot_contract() -> None:
+    with pytest.raises(ConfigValidationError, match="canonical ordered filenames"):
+        load_config(
+            [BASE_CONFIG],
+            overrides={"portfolio_report.screenshot_filenames": ["only-one.png"]},
+        )
+
+
 @pytest.mark.parametrize(
     "key,value",
     [

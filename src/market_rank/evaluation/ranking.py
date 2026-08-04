@@ -75,6 +75,7 @@ COMPARISONS_FILENAME = "comparisons.parquet"
 FAILURE_ANALYSIS_FILENAME = "failure-analysis.parquet"
 
 Profile = Literal["development", "portfolio"]
+ProjectEvaluationSplit = Literal["validation", "test"]
 EvaluationStage = Literal["rrf", "pointwise", "lambdamart"]
 Protocol = Literal["closed_pool_task1_v1", "end_to_end_diagnostic_v1"]
 Sha256Digest = Annotated[str, StringConstraints(strict=True, pattern=r"^[0-9a-f]{64}$")]
@@ -352,6 +353,18 @@ class RankingEvaluationBuildResult:
     artifact: LoadedArtifact
     manifest: RankingEvaluationManifest
     reused: bool
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenRankingEvaluation:
+    """One fixed-split evaluation that performs no champion selection."""
+
+    split: ProjectEvaluationSplit
+    predictions: pl.DataFrame
+    query_metrics: pl.DataFrame
+    aggregate_metrics: pl.DataFrame
+    comparisons: pl.DataFrame
+    failure_analysis: pl.DataFrame
 
 
 @dataclass(frozen=True, slots=True)
@@ -692,9 +705,11 @@ def _context_rows(
 
 
 def _read_evaluation_inputs(
-    dependencies: _Dependencies, config: ResolvedConfig
+    dependencies: _Dependencies,
+    config: ResolvedConfig,
+    *,
+    split: ProjectEvaluationSplit = "validation",
 ) -> _EvaluationInputs:
-    split = config.config.ranking_evaluation.selection_split
     closed_path = str(dependencies.features.path / CLOSED_MATRIX_DIRECTORY / "*.parquet")
     candidate_path = str(dependencies.features.path / CANDIDATE_MATRIX_DIRECTORY / "*.parquet")
     hybrid_path = str(dependencies.retrieval.path / CANDIDATE_DIRECTORY / "*.parquet")
@@ -759,12 +774,10 @@ def _read_evaluation_inputs(
     except pl.exceptions.PolarsError as exc:
         raise RankingEvaluationBuildError(f"cannot read ranking-evaluation inputs: {exc}") from exc
     if closed.is_empty():
-        raise RankingEvaluationBuildError("project validation has no closed judged rows")
+        raise RankingEvaluationBuildError(f"project {split} has no closed judged rows")
     limits = config.config.ranking_evaluation
     if closed.height > limits.max_closed_rows or candidates.height > limits.max_candidate_rows:
-        raise RankingEvaluationBuildError(
-            "exact validation evaluation population exceeds row limits"
-        )
+        raise RankingEvaluationBuildError(f"exact {split} evaluation population exceeds row limits")
     for name, frame in (("closed", closed), ("candidate", candidates)):
         if frame.select(pl.struct("query_id", "product_id").n_unique()).item() != frame.height:
             raise RankingEvaluationBuildError(f"{name} evaluation keys are not unique")
@@ -914,14 +927,16 @@ def _query_metric_rows(
     inputs: _EvaluationInputs,
     config: ResolvedConfig,
     profile: Profile,
+    *,
+    split: ProjectEvaluationSplit = "validation",
 ) -> pl.DataFrame:
     rows: list[dict[str, object]] = []
     judgments = _judgments_by_query(inputs.closed)
     contexts = _context_mapping(inputs.contexts)
     ranking = config.config.ranking_evaluation
     population_ids = {
-        CLOSED_POOL_PROTOCOL: "esci_task1_us_judged_pool_validation_v1",
-        END_TO_END_PROTOCOL: "end_to_end_hybrid_union_validation_v1",
+        CLOSED_POOL_PROTOCOL: f"esci_task1_us_judged_pool_{split}_v1",
+        END_TO_END_PROTOCOL: f"end_to_end_hybrid_union_{split}_v1",
     }
     for protocol, cutoffs in (
         (CLOSED_POOL_PROTOCOL, ranking.closed_cutoffs),
@@ -1364,6 +1379,86 @@ def _reuse(
     return RankingEvaluationBuildResult(artifact, manifest, True)
 
 
+def evaluate_frozen_ranking_test(
+    store: ArtifactStore,
+    config: ResolvedConfig,
+    manifest: RankingEvaluationManifest,
+) -> FrozenRankingEvaluation:
+    """Evaluate project test once using the validation-frozen active contract."""
+    if manifest.profile != "portfolio" or manifest.config_sha256 != config.sha256:
+        raise RankingEvaluationValidationError(
+            "frozen test evaluation requires the compatible portfolio validation manifest"
+        )
+    try:
+        models = store.load(manifest.ranking_models_artifact_id)
+        models_manifest = load_ranking_models_manifest(models.path / RANKING_MODELS_FILENAME)
+        features = store.load(manifest.ranking_features_artifact_id)
+        features_manifest = load_ranking_feature_manifest(features.path / FEATURE_ARTIFACT_FILENAME)
+        retrieval = store.load(manifest.retrieval_evaluation_artifact_id)
+        retrieval_manifest = load_retrieval_evaluation_manifest(
+            retrieval.path / RETRIEVAL_EVALUATION_FILENAME
+        )
+        rankers = load_rankers(store, models.manifest.artifact_id)
+    except (OSError, RuntimeError) as exc:
+        raise RankingEvaluationBuildError("cannot load frozen portfolio test dependencies") from exc
+    if (
+        models.manifest_sha256 != manifest.ranking_models_manifest_sha256
+        or models_manifest.feature_artifact_id != features.manifest.artifact_id
+        or features.manifest_sha256 != manifest.ranking_features_manifest_sha256
+        or features_manifest.retrieval_evaluation_artifact_id != retrieval.manifest.artifact_id
+        or retrieval.manifest_sha256 != manifest.retrieval_evaluation_manifest_sha256
+        or retrieval_manifest.config_sha256 != config.sha256
+        or retrieval_manifest.profile != "portfolio"
+    ):
+        raise RankingEvaluationValidationError(
+            "frozen portfolio test dependency lineage is incompatible"
+        )
+    dependencies = _Dependencies(
+        models=models,
+        models_manifest=models_manifest,
+        features=features,
+        features_manifest=features_manifest,
+        retrieval=retrieval,
+        retrieval_manifest=retrieval_manifest,
+    )
+    inputs = _read_evaluation_inputs(dependencies, config, split="test")
+    closed = _score_columns(inputs.closed, rankers)
+    candidates = _score_columns(inputs.candidates, rankers)
+    prediction_rows = _prediction_rows(
+        closed,
+        profile="portfolio",
+        protocol=CLOSED_POOL_PROTOCOL,
+        population_id="esci_task1_us_judged_pool_test_v1",
+    ) + _prediction_rows(
+        candidates,
+        profile="portfolio",
+        protocol=END_TO_END_PROTOCOL,
+        population_id="end_to_end_hybrid_union_test_v1",
+    )
+    predictions = (
+        pl.DataFrame(prediction_rows, schema=_PREDICTION_SCHEMA)
+        .with_columns(
+            (pl.col("stage") == manifest.active_relevance.selected_stage).alias("active_relevance")
+        )
+        .sort("protocol", "query_id", "stage", "rank")
+    )
+    query_metrics = _query_metric_rows(
+        predictions,
+        inputs,
+        config,
+        "portfolio",
+        split="test",
+    )
+    return FrozenRankingEvaluation(
+        split="test",
+        predictions=predictions,
+        query_metrics=query_metrics,
+        aggregate_metrics=build_ranking_aggregate_metrics(query_metrics, config),
+        comparisons=build_ranking_comparisons(query_metrics, config),
+        failure_analysis=_failure_analysis(query_metrics, config),
+    )
+
+
 def build_ranking_evaluation(
     release: ResolvedReleaseManifest,
     config: ResolvedConfig,
@@ -1383,7 +1478,7 @@ def build_ranking_evaluation(
 
     try:
         rankers = load_rankers(store, dependencies.models.manifest.artifact_id)
-        inputs = _read_evaluation_inputs(dependencies, config)
+        inputs = _read_evaluation_inputs(dependencies, config, split="validation")
     except RuntimeError as exc:
         raise RankingEvaluationBuildError(f"cannot load ranking evaluation inputs: {exc}") from exc
     rss_limit = config.config.runtime.rss_limit_mb * 1024 * 1024
@@ -1416,7 +1511,9 @@ def build_ranking_evaluation(
     predictions = pl.DataFrame(prediction_rows, schema=_PREDICTION_SCHEMA).sort(
         "protocol", "query_id", "stage", "rank"
     )
-    query_metrics = _query_metric_rows(predictions, inputs, config, selected_profile)
+    query_metrics = _query_metric_rows(
+        predictions, inputs, config, selected_profile, split="validation"
+    )
     aggregate = build_ranking_aggregate_metrics(query_metrics, config)
     comparisons = build_ranking_comparisons(query_metrics, config)
     active = _select_champion(query_metrics, config, dependencies)
@@ -1609,6 +1706,7 @@ __all__ = [
     "RANKING_EVALUATION_FILENAME",
     "RUN_FILENAME",
     "ActiveRelevanceContract",
+    "FrozenRankingEvaluation",
     "RankingEvaluationBuildError",
     "RankingEvaluationBuildResult",
     "RankingEvaluationError",
@@ -1618,6 +1716,7 @@ __all__ = [
     "build_ranking_aggregate_metrics",
     "build_ranking_comparisons",
     "build_ranking_evaluation",
+    "evaluate_frozen_ranking_test",
     "load_active_relevance_contract",
     "load_ranking_evaluation_manifest",
     "ranking_evaluation_artifact_id",

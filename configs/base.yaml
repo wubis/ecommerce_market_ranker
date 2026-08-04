@@ -168,6 +168,19 @@ qualification:
     - iphone 13 case
     - coffee maker
     - blue dress
+portfolio_report:
+  component_version: portfolio-release-v1
+  generation: final-v1
+  required_profile: portfolio
+  final_evaluation_split: test
+  screenshot_filenames:
+    - ranking-comparison.png
+    - product-provenance.png
+    - dataset-limitations.png
+  minimum_screenshot_width: 1000
+  minimum_screenshot_height: 600
+  maximum_screenshot_bytes: 10485760
+  require_clean_reproduction: true
 logging:
   level: INFO
   format: json

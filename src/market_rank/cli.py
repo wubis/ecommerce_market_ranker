@@ -21,6 +21,11 @@ from market_rank.evaluation.retrieval import (
     build_retrieval_evaluation,
 )
 from market_rank.features.artifact import RankingFeatureError, build_ranking_features
+from market_rank.portfolio import (
+    PortfolioError,
+    build_portfolio_release,
+    verify_clean_reproduction,
+)
 from market_rank.qualification import QualificationError, build_release_qualification
 from market_rank.ranking.training import RankingTrainingError, build_rankers
 from market_rank.retrieval.dense import (
@@ -311,6 +316,30 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="explicit lineage revision when Git discovery is unavailable",
     )
+    portfolio_parser = command_parsers.add_parser(
+        "portfolio", help="frozen project-test evaluation and final release-package commands"
+    )
+    portfolio_commands = portfolio_parser.add_subparsers(dest="portfolio_command", required=True)
+    verify_portfolio_parser = portfolio_commands.add_parser(
+        "verify-reproduction", help="run clean lock, static, and test gates"
+    )
+    verify_portfolio_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    verify_portfolio_parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("reports/generated/clean-reproduction.json"),
+    )
+    verify_portfolio_parser.add_argument("--code-revision", default=None)
+    finalize_portfolio_parser = portfolio_commands.add_parser(
+        "finalize", help="evaluate frozen project test and publish the final core package"
+    )
+    finalize_portfolio_parser.add_argument("--ranking-evaluation-id", required=True)
+    finalize_portfolio_parser.add_argument("--serving-bundle-id", required=True)
+    finalize_portfolio_parser.add_argument("--qualification-id", required=True)
+    finalize_portfolio_parser.add_argument("--reproduction-evidence", type=Path, required=True)
+    finalize_portfolio_parser.add_argument("--screenshots-dir", type=Path, required=True)
+    finalize_portfolio_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    finalize_portfolio_parser.add_argument("--code-revision", default=None)
     return parser
 
 
@@ -682,6 +711,39 @@ def _run_qualification(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _run_portfolio_verify(arguments: argparse.Namespace) -> int:
+    config = load_config([arguments.config])
+    repository_root = _find_repository_root(arguments.config.resolve(strict=False).parent)
+    evidence = verify_clean_reproduction(
+        config,
+        code_revision=_resolve_code_revision(arguments, arguments.config),
+        repository_root=repository_root,
+        output_path=arguments.output,
+    )
+    print(f"clean reproduction: {evidence.test_count} tests; evidence {arguments.output}")
+    return 0
+
+
+def _run_portfolio_finalize(arguments: argparse.Namespace) -> int:
+    config = load_config([arguments.config])
+    result = build_portfolio_release(
+        config,
+        ranking_evaluation_id=str(arguments.ranking_evaluation_id),
+        serving_bundle_id=str(arguments.serving_bundle_id),
+        qualification_id=str(arguments.qualification_id),
+        reproduction_evidence_path=arguments.reproduction_evidence,
+        screenshots_dir=arguments.screenshots_dir,
+        code_revision=_resolve_code_revision(arguments, arguments.config),
+    )
+    status = "reused" if result.reused else "published"
+    print(
+        f"portfolio release: {result.manifest.test_query_count} project-test queries; "
+        f"active stage {result.manifest.active_stage}"
+    )
+    print(f"{status} portfolio release: {result.artifact.manifest.artifact_id}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run one explicit CLI command and return a bounded process exit code."""
     parser = build_parser()
@@ -717,6 +779,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_demo(arguments)
         if arguments.command == "qualification" and arguments.qualification_command == "run":
             return _run_qualification(arguments)
+        if (
+            arguments.command == "portfolio"
+            and arguments.portfolio_command == "verify-reproduction"
+        ):
+            return _run_portfolio_verify(arguments)
+        if arguments.command == "portfolio" and arguments.portfolio_command == "finalize":
+            return _run_portfolio_finalize(arguments)
     except RawDataValidationError as exc:
         print(
             f"error: raw ESCI validation failed ({_failed_check_count(exc)} checks failed)",
@@ -731,6 +800,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         DemoClientError,
         DemoLaunchError,
         ProfileBuildError,
+        PortfolioError,
         QualificationError,
         RawDataError,
         RankingFeatureError,

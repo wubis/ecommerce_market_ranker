@@ -14,17 +14,17 @@ tested, documented, reproducible, and independently reviewable.
 
 | Scope | Target |
 |---|---:|
-| Current implemented sequence | Through Goldfish 015 |
+| Current implemented sequence | Through Goldfish 016 |
 | Core portfolio-ready project | Goldfish 016 |
-| Remaining core Goldfishes | Approximately 1 |
+| Remaining core Goldfishes | 0 |
 | Optional neural and diversity extensions | Goldfish 017–018 |
 
 Goldfish 004A is an additional completed extension even though it does not advance the primary
 integer numbering. The recommended plan therefore concerns the remaining numbered stages and
 does not attempt to renumber prior work.
 
-The expanded plan targeted roughly ten subsystem-sized stages beginning with Goldfish 007. Nine
-of those stages are now implemented and one core stage remains. That sizing keeps dense
+The expanded plan targeted roughly ten subsystem-sized stages beginning with Goldfish 007. All ten
+core stages are now implemented. That sizing keeps dense
 retrieval, features, training, evaluation, serving, demo, and qualification independently
 reviewable without returning to the earlier fragmentation.
 
@@ -106,9 +106,13 @@ measurements require the frozen Goldfish 016 bundle and are not yet claimed.
 
 ### Goldfish 016 — Frozen Portfolio Experiments and Final Report
 
+**Status: Implemented.**
+
 Run the frozen development/portfolio workflow, produce final baseline and ablation tables,
 record hardware/config/code/artifact lineage, capture demo screenshots, write the scientific
 and engineering narrative, disclose negative results honestly, and verify clean reproduction.
+The complete path is persisted-fixture validated; production publication still requires the real
+portfolio artifact DAG, passing qualification, clean evidence, and screenshots and is not claimed.
 
 ## Optional Extensions
 

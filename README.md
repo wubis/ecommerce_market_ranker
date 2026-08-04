@@ -4,7 +4,8 @@ MarketRank is a planned CPU-first, multi-stage e-commerce search and ranking sys
 around the public Amazon ESCI Task 1 relevance judgments. The authoritative architecture is
 defined in [ELEPHANT.md](ELEPHANT.md).
 
-This repository has completed **Goldfish 015**: environment/tooling, reproducible ESCI data
+This repository has completed the core roadmap through **Goldfish 016**: environment/tooling,
+reproducible ESCI data
 foundations, persisted fixed-catalog BM25 retrieval, protocol-safe metric primitives, and a
 checkpointed MiniLM/FAISS dense retriever. Deterministic RRF fusion now produces partitioned
 fixed-cohort retrieval reports with grouped confidence intervals, slices, paired comparisons,
@@ -22,8 +23,11 @@ readiness and degraded fallbacks. A thin localhost-only Streamlit client now com
 modes with product cards, provenance, rank movement, bounded debug features, latency, lineage,
 and explicit dataset limitations. A fail-closed release-qualification stage now verifies an
 explicit bundle's offline startup, readiness, six-mode API latency, modest concurrency, peak RSS,
-safe host facts, and immutable lineage on the exact M3/8 GB reference host. The frozen portfolio
-bundle and final qualification measurements remain Goldfish 016 work.
+safe host facts, and immutable lineage on the exact M3/8 GB reference host. A frozen finalizer now
+uses the untouched project-test split without reselection and packages protocol-separated tables,
+ablations, negative findings, lineage, plots, validated demo screenshots, limitations, and clean
+reproduction evidence. The path is persisted-fixture validated; this checkout contains no real
+portfolio artifact DAG or screenshots, so it makes no production numeric claim.
 
 ## Reference environment
 
@@ -510,6 +514,35 @@ bundle, so it makes no final latency or RSS claim yet. See the
 [`Goldfish 015 design`](docs/goldfish/015-hardening-m3-qualification.md) and
 [`local qualification runbook`](docs/runbooks/local-release-qualification.md).
 
+## Finalize the frozen portfolio release
+
+After the exact portfolio ranking evaluation, serving bundle, and passing qualification exist,
+commit the release implementation and verify it from a clean worktree:
+
+```bash
+uv run market-rank portfolio verify-reproduction \
+  --output reports/generated/clean-reproduction.json
+```
+
+Capture the three named real-demo screenshots, then perform the frozen project-test evaluation for
+this release generation:
+
+```bash
+uv run market-rank portfolio finalize \
+  --ranking-evaluation-id <exact-ranking-evaluation-id> \
+  --serving-bundle-id <exact-serving-bundle-id> \
+  --qualification-id <exact-release-qualification-id> \
+  --reproduction-evidence reports/generated/clean-reproduction.json \
+  --screenshots-dir reports/generated/screenshots
+```
+
+The finalizer verifies recursive lineage, split and protocol boundaries, the M3/8 GB qualification,
+clean revision/config evidence, and PNG structure before reading test. It then writes one immutable
+release containing raw metric Parquet, CSV tables, SVG plots, screenshots, lineage, limitations,
+and the generated report. It reuses a compatible completed artifact on rerun. See the
+[`Goldfish 016 design`](docs/goldfish/016-frozen-portfolio-final-report.md) and
+[`final release runbook`](docs/runbooks/final-portfolio-release.md).
+
 ## Download and offline boundary
 
 Internet access is allowed only during explicit setup operations:
@@ -567,13 +600,16 @@ ecommerce_market_ranker/
 ├── docs/goldfish/013-serving-bundle-fastapi.md
 ├── docs/goldfish/014-streamlit-portfolio-demo.md
 ├── docs/goldfish/015-hardening-m3-qualification.md
+├── docs/goldfish/016-frozen-portfolio-final-report.md
 ├── docs/goldfish/consolidated-roadmap.md
+├── docs/runbooks/final-portfolio-release.md
 ├── docs/runbooks/local-release-qualification.md
 ├── src/market_rank/
 │   ├── __init__.py
 │   ├── artifacts.py
 │   ├── cli.py
 │   ├── config.py
+│   ├── portfolio.py
 │   ├── qualification.py
 │   ├── data/
 │   │   ├── __init__.py
@@ -620,6 +656,7 @@ ecommerce_market_ranker/
     ├── integration/test_ranker_training.py
     ├── integration/test_ranking_evaluation.py
     ├── integration/test_ranking_features.py
+    ├── integration/test_portfolio.py
     ├── integration/test_qualification.py
     ├── integration/test_retrieval_evaluation.py
     ├── integration/test_sparse_retrieval.py
@@ -635,6 +672,7 @@ ecommerce_market_ranker/
         ├── test_features.py
         ├── test_hybrid.py
         ├── test_metrics.py
+        ├── test_portfolio.py
         ├── test_query_parser.py
         ├── test_qualification.py
         ├── test_ranking_evaluation.py
@@ -642,4 +680,4 @@ ecommerce_market_ranker/
         └── test_esci_raw.py
 ```
 
-Later directories and modules will be introduced only by approved Goldfish tasks.
+Optional Goldfish 017–018 extensions remain outside the completed core scope.

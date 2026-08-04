@@ -399,6 +399,35 @@ class QualificationConfig(_StrictModel):
         return self
 
 
+class PortfolioReportConfig(_StrictModel):
+    """Frozen core portfolio release-package requirements."""
+
+    component_version: Literal["portfolio-release-v1"] = "portfolio-release-v1"
+    generation: Literal["final-v1"] = "final-v1"
+    required_profile: Literal["portfolio"] = "portfolio"
+    final_evaluation_split: Literal["test"] = "test"
+    screenshot_filenames: tuple[str, ...] = (
+        "ranking-comparison.png",
+        "product-provenance.png",
+        "dataset-limitations.png",
+    )
+    minimum_screenshot_width: int = Field(default=1000, strict=True, ge=640, le=7680)
+    minimum_screenshot_height: int = Field(default=600, strict=True, ge=480, le=4320)
+    maximum_screenshot_bytes: int = Field(default=10 * 1024**2, strict=True, ge=1024)
+    require_clean_reproduction: bool = Field(default=True, strict=True)
+
+    @model_validator(mode="after")
+    def validate_portfolio_report(self) -> Self:
+        expected = (
+            "ranking-comparison.png",
+            "product-provenance.png",
+            "dataset-limitations.png",
+        )
+        if self.screenshot_filenames != expected:
+            raise ValueError("portfolio screenshots must use the canonical ordered filenames")
+        return self
+
+
 class LoggingConfig(_StrictModel):
     """Safe local logging defaults."""
 
@@ -424,6 +453,7 @@ class AppConfig(_StrictModel):
     serving: ServingConfig = ServingConfig()
     demo: DemoConfig = DemoConfig()
     qualification: QualificationConfig = QualificationConfig()
+    portfolio_report: PortfolioReportConfig = PortfolioReportConfig()
     logging: LoggingConfig = LoggingConfig()
 
     @model_validator(mode="after")
@@ -617,6 +647,7 @@ __all__ = [
     "HybridRetrievalConfig",
     "LoggingConfig",
     "PathsConfig",
+    "PortfolioReportConfig",
     "ProjectConfig",
     "QualificationConfig",
     "QueryUnderstandingConfig",
