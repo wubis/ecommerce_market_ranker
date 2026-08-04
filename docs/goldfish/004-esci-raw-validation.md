@@ -44,7 +44,9 @@ canonical release manifest and canonical validation report.
 - Pinned official repository revision, license, paper, file URL, byte size, and checksum.
 - Safe local paths with symbolic-link and traversal rejection.
 - Streaming 1 MiB file checksums.
-- Polars lazy scans with exact ordered columns and semantic physical-type checks.
+- Polars lazy scans with exact ordered semantic columns and physical-type checks. The pinned
+  official examples Parquet's trailing Pandas artifact `__index_level_0__` is explicitly audited,
+  projected away before validation, and is the only permitted non-semantic source column.
 - Required-null, non-empty, locale, ESCI label, split, and binary-flag checks.
 - Primary-key uniqueness and query-text consistency checks.
 - Example-to-product and example-to-source referential checks.

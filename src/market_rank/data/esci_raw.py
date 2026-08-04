@@ -241,6 +241,7 @@ class _SchemaSpec:
     primary_key: tuple[str, ...]
     domains: tuple[tuple[str, tuple[str, ...]], ...] = ()
     flags: tuple[str, ...] = ()
+    optional_ignored_columns: tuple[str, ...] = ()
 
 
 _SCHEMAS: dict[RawRole, _SchemaSpec] = {
@@ -285,6 +286,7 @@ _SCHEMAS: dict[RawRole, _SchemaSpec] = {
             ("split", ("train", "test")),
         ),
         flags=("small_version", "large_version"),
+        optional_ignored_columns=("__index_level_0__",),
     ),
     "products": _SchemaSpec(
         columns=(
@@ -518,12 +520,16 @@ def _validate_file(
     checks.append(_check("schema_readable", True, "source metadata is readable"))
     spec = _SCHEMAS[source.role]
     observed_names = tuple(column.name for column in columns)
-    columns_match = observed_names == spec.columns
+    permitted_columns = (spec.columns, spec.columns + spec.optional_ignored_columns)
+    columns_match = observed_names in permitted_columns
     checks.append(
         _check(
             "exact_columns",
             columns_match,
-            f"expected {spec.columns}, observed {observed_names}",
+            (
+                f"expected {spec.columns} with optional ignored "
+                f"{spec.optional_ignored_columns}, observed {observed_names}"
+            ),
         )
     )
     if not columns_match:
@@ -539,6 +545,7 @@ def _validate_file(
             ),
             None,
         )
+    lazy_frame = lazy_frame.select(spec.columns)
 
     type_failures = [
         f"{name}={observed_schema[name]}"
@@ -576,8 +583,7 @@ def _validate_file(
         for column_name, allowed_values in spec.domains:
             invalid_count = _collect_scalar(
                 lazy_frame.filter(
-                    pl.col(column_name).is_null()
-                    | ~pl.col(column_name).is_in(allowed_values)
+                    pl.col(column_name).is_null() | ~pl.col(column_name).is_in(allowed_values)
                 ).select(pl.len())
             )
             checks.append(
@@ -594,8 +600,7 @@ def _validate_file(
             allowed_flags = (False, True) if dtype == pl.Boolean else (0, 1)
             invalid_count = _collect_scalar(
                 lazy_frame.filter(
-                    pl.col(column_name).is_null()
-                    | ~pl.col(column_name).is_in(allowed_flags)
+                    pl.col(column_name).is_null() | ~pl.col(column_name).is_in(allowed_flags)
                 ).select(pl.len())
             )
             checks.append(

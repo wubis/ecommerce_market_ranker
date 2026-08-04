@@ -258,6 +258,18 @@ def test_exact_columns_are_required(tmp_path: Path) -> None:
     assert not checks["exact_columns"].passed
 
 
+def test_official_pandas_index_artifact_is_audited_and_ignored(tmp_path: Path) -> None:
+    official_examples = _examples().with_columns(
+        pl.int_range(pl.len(), dtype=pl.Int64).alias("__index_level_0__")
+    )
+    _, report = _validate_fixture(tmp_path, examples=official_examples)
+
+    assert report.valid
+    checks = {check.check_id: check for check in report.files[0].checks}
+    assert checks["exact_columns"].passed
+    assert "optional ignored ('__index_level_0__',)" in checks["exact_columns"].detail
+
+
 def test_semantic_types_are_required(tmp_path: Path) -> None:
     invalid_examples = _examples().with_columns(pl.col("query_id").cast(pl.String))
     _, report = _validate_fixture(tmp_path, examples=invalid_examples)
