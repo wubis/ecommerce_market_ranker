@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Implemented |
+| Status | Implemented; frozen portfolio release produced |
 | Roadmap authority | `docs/goldfish/consolidated-roadmap.md`, Goldfish 016 |
 | Parent design | `ELEPHANT.md`, Sections 25–27, 31, 37, 41–44, 47–48, 51–52 |
 | Milestone | M15 — Frozen project-test evaluation and core portfolio release package |
@@ -139,11 +139,47 @@ never intentionally retained together in the qualified service process.
 
 ## Current Publication Status
 
-The complete path is fixture-validated, including a real persisted tiny artifact DAG and untouched
-fixture test split. The workspace contains no production ESCI portfolio artifacts, passing
-production qualification, or captured production demo screenshots. Therefore no final numeric
-portfolio report is published or claimed in Git by this implementation turn. Running the documented
-workflow on those real inputs is an explicit operational step, not permission to manufacture data.
+The frozen portfolio workflow completed successfully on the real compact ESCI research benchmark.
+The immutable release is identified by:
+
+| Field | Frozen value |
+|---|---|
+| Artifact ID | `portfolio-release/esci-7916cdf6ab75/portfolio/portfolio-release-v1/4f8ee4896cfefa049c910e9f47d58fb61619084cad60ec0fc29a86141b891838` |
+| Configuration SHA-256 | `4f8ee4896cfefa049c910e9f47d58fb61619084cad60ec0fc29a86141b891838` |
+| Clean code revision | `e5455991a1f5c417f828a4195b3371df0526afd5` |
+| Project-test cohort | 6,028 queries |
+| Artifact verification | 21 files; 3 exact direct dependencies |
+| Clean reproduction | 272 tests passed |
+
+### Final measured results
+
+| Stage or measurement | @10 | @20 / @100 |
+|---|---:|---:|
+| LambdaMART closed-pool NDCG | 0.7272 (95% CI 0.7221–0.7327) | 0.8101 (95% CI 0.8057–0.8142) |
+| Pointwise closed-pool NDCG | 0.7226 | 0.8074 |
+| RRF closed-pool NDCG | 0.7183 | 0.8035 |
+| Hybrid catalog judged recall | 0.3025 (95% CI 0.2949–0.3108) | 0.6171 at 100 (95% CI 0.6094–0.6254) |
+
+LambdaMART's closed-pool gain over RRF was 0.0088 at NDCG@10 (95% CI 0.0065–0.0112) and
+0.0065 at NDCG@20 (95% CI 0.0049–0.0083). Its gain over the pointwise model was 0.0045 at
+NDCG@10 (95% CI 0.0019–0.0072) and 0.0026 at NDCG@20 (95% CI 0.0007–0.0046).
+
+The end-to-end comparison is deliberately not summarized as an unqualified win. Against RRF,
+LambdaMART changed exact hit@10 by -0.0471, judged MRR@10 by -0.0527, judged recall@10 by -0.0453,
+and known-judgment coverage@10 by -0.0689. At depth 100 it improved exact hit by 0.0048 and judged
+recall by 0.0064, while judged MRR remained negative and the coverage result was inconclusive or
+slightly negative. The learned ranker therefore improves closed-pool ordering but does not solve
+retrieval coverage and can worsen top-10 retrieval-aware outcomes.
+
+The qualified reference host was an Apple M3 Mac with 8 GB unified memory. Active-serving p95 was
+167.0 ms, cold startup was 19.0 seconds, and peak RSS was 2.46 GB against the 5.91 GB ceiling. The
+benchmark catalog contains 340,500 required judged products and 100,000 deterministic distractors,
+for 440,500 usable products. These measurements are scoped to that compact research catalog and
+do not claim live Amazon, full-catalog, business, or production-service performance.
+
+The release DAG, generated report, plots, raw metrics, and screenshots are intentionally ignored
+by Git. This tracked document records the frozen identity and results; exact machine-readable
+evidence remains in the immutable local artifact named above.
 
 ## Out of Scope
 

@@ -105,18 +105,24 @@ reliable local demonstration workflow.
 Complete regression, corruption, security, offline-startup, and end-to-end tests; measure local
 latency and peak RSS; resolve resource blockers; document runbooks, recovery, limitations, and
 reproduction; and prepare a release candidate on the reference Apple M3 with 8 GB memory.
-The fail-closed qualification machinery and persisted fixture path are complete; final portfolio
-measurements require the frozen Goldfish 016 bundle and are not yet claimed.
+The fail-closed qualification machinery and persisted fixture path are complete. The final
+Goldfish 016 serving bundle passed qualification on the reference M3/8 GB host at 167.0 ms active
+p95 latency and 2.46 GB peak RSS against the 5.91 GB process ceiling.
 
 ### Goldfish 016 — Frozen Portfolio Experiments and Final Report
 
-**Status: Implemented.**
+**Status: Implemented; frozen portfolio release produced.**
 
 Run the frozen development/portfolio workflow, produce final baseline and ablation tables,
 record hardware/config/code/artifact lineage, capture demo screenshots, write the scientific
 and engineering narrative, disclose negative results honestly, and verify clean reproduction.
-The complete path is persisted-fixture validated; production publication still requires the real
-portfolio artifact DAG, passing qualification, clean evidence, and screenshots and is not claimed.
+The release was finalized from clean revision `e5455991a1f5c417f828a4195b3371df0526afd5` with
+configuration `4f8ee4896cfefa049c910e9f47d58fb61619084cad60ec0fc29a86141b891838`. Its recursively verified
+21-file artifact DAG has three exact direct dependencies, passing qualification, 272-test clean
+reproduction evidence, and three validated screenshots. The final untouched cohort contains 6,028
+queries; LambdaMART achieved closed-pool NDCG@10 of 0.7272 and NDCG@20 of 0.8101. Generated release
+artifacts remain intentionally outside Git. Goldfish 017 and later stages are optional extensions,
+not blockers for the completed core project.
 
 ## Optional Extensions
 

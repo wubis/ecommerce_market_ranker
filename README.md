@@ -12,9 +12,39 @@ The project is designed to run on an Apple M3 Mac with 8 GB of unified memory. E
 are isolated into resumable offline stages; application startup only loads verified, immutable
 artifacts.
 
-> **Status:** The core implementation is complete through Goldfish 016A. The real frozen portfolio
-> artifact lineage and final benchmark package are still being produced, so this repository does
-> not yet publish final relevance, latency, or memory claims.
+> **Status:** The core project is complete through Goldfish 016A. The frozen portfolio release,
+> passing M3/8 GB qualification, clean reproduction evidence, and validated demo screenshots were
+> produced from revision `e5455991a1f5c417f828a4195b3371df0526afd5` under configuration
+> `4f8ee4896cfefa049c910e9f47d58fb61619084cad60ec0fc29a86141b891838`.
+
+## Frozen portfolio results
+
+The final release evaluates 6,028 untouched project-test queries. LambdaMART was selected using
+validation only and was carried unchanged into the frozen test evaluation.
+
+| Measurement | Final result |
+|---|---:|
+| LambdaMART closed-pool NDCG@10 | 0.7272 (95% CI 0.7221–0.7327) |
+| LambdaMART closed-pool NDCG@20 | 0.8101 (95% CI 0.8057–0.8142) |
+| Hybrid catalog judged recall@10 | 0.3025 (95% CI 0.2949–0.3108) |
+| Hybrid catalog judged recall@100 | 0.6171 (95% CI 0.6094–0.6254) |
+| Active-serving p95 latency | 167.0 ms |
+| Cold startup | 19.0 s |
+| Peak resident memory | 2.46 GB against a 5.91 GB ceiling |
+| Clean reproduction | 272 tests passed |
+
+On the complete judged pool, LambdaMART improved NDCG@10 over RRF by 0.0088 (95% CI
+0.0065–0.0112) and over the pointwise model by 0.0045 (95% CI 0.0019–0.0072). The end-to-end
+diagnostics are less uniformly positive: compared with RRF, LambdaMART reduced top-10 exact hit,
+judged MRR, judged recall, and known-judgment coverage. This is the project's central tradeoff:
+the learned ranker improves ordering when the judged products are present, but it does not repair
+limited top-10 retrieval coverage and can move known-relevant products below that cutoff.
+
+These results apply to `esci_task1_us_compact_catalog_v1`, which contains all 340,500 products
+judged for portfolio queries plus 100,000 deterministic distractors. They are research-benchmark
+measurements, not live Amazon, full-catalog, business, or production-service claims. The generated
+artifact DAG and reports are immutable local release outputs and are intentionally excluded from
+Git; this README records their exact revision, configuration, scope, and headline results.
 
 ## System design
 
